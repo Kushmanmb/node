@@ -171,7 +171,7 @@ install_manifest.txt
 /.env.production.local
 /config/.env*
 # Private keys and certificates (not in test fixtures or deps)
-# Note: Test fixtures and deps are kept via negation rules below
+# Note: Test fixtures and deps are already allowed via earlier dotfile exceptions
 /*.pem
 /*.key
 /*.p12
@@ -184,25 +184,17 @@ install_manifest.txt
 /secrets.json
 /secrets.yml
 /credentials.json
-# But keep test fixtures, dependencies, and benchmarks
-!test/**
-!deps/**
-!benchmark/**
 
 # === Rules for data files ===
-# Log files (not in test fixtures, deps, or benchmarks)
+# Log files (only in root and logs directory)
 /*.log
 /logs/*.log
-# npm/yarn debug logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-pnpm-debug.log*
-# But keep test logs, vendored logs, and benchmarks
-!test/**/*.log
-!deps/**/*.log
-!benchmark/**/*.log
+# npm/yarn debug logs (only in root, can occur during development)
+/npm-debug.log*
+/yarn-debug.log*
+/yarn-error.log*
+/lerna-debug.log*
+/pnpm-debug.log*
 # Data files (only in root and data directories)
 /*.csv
 /data/*.csv
