@@ -160,6 +160,47 @@ cmake_install.cmake
 install_manifest.txt
 *.cbp
 
+# === Rules for sensitive files ===
+# Environment files with secrets and credentials
+# Only ignore these in the root directory and common config locations
+/.env
+/.env.local
+/.env.*.local
+/config/.env*
+# Private keys and certificates (not in test fixtures or deps)
+# Note: Test fixtures and deps are already allowed via earlier dotfile exceptions
+/*.pem
+/*.key
+/*.p12
+/*.pfx
+/config/*.pem
+/config/*.key
+/config/*.p12
+/config/*.pfx
+# Secrets and credentials files
+/secrets.json
+/secrets.yml
+/credentials.json
+
+# === Rules for data files ===
+# Log files (only in root and logs directory)
+/*.log
+/logs/*.log
+# Data files (only in root and data directories)
+/*.csv
+/data/*.csv
+/*.dat
+/data/*.dat
+/*.data
+/data/*.data
+# Database files (only in root and data directories)
+/*.db
+/*.sqlite
+/*.sqlite3
+/data/*.db
+/data/*.sqlite
+/data/*.sqlite3
+
 # === Global Rules ===
 # Keep last to avoid being excluded
 *.pyc
