@@ -125,34 +125,6 @@ Any subtests that are still outstanding when their parent finishes
 are cancelled and treated as failures. Any subtest failures cause the parent
 test to fail.
 
-## Skipping tests
-
-Individual tests can be skipped by passing the `skip` option to the test, or by
-calling the test context's `skip()` method as shown in the
-following example.
-
-```js
-// The skip option is used, but no message is provided.
-test('skip option', { skip: true }, (t) => {
-  // This code is never executed.
-});
-
-// The skip option is used, and a message is provided.
-test('skip option with message', { skip: 'this is skipped' }, (t) => {
-  // This code is never executed.
-});
-
-test('skip() method', (t) => {
-  // Make sure to return here as well if the test contains additional logic.
-  t.skip();
-});
-
-test('skip() method with message', (t) => {
-  // Make sure to return here as well if the test contains additional logic.
-  t.skip('this is skipped');
-});
-```
-
 ## Rerunning failed tests
 
 The test runner supports persisting the state of the run to a file, allowing
@@ -193,6 +165,68 @@ When the `--test-rerun-failures` option is used, the test runner will only run t
 node --test-rerun-failures /path/to/state/file
 ```
 
+## `describe()` and `it()` aliases
+
+Suites and tests can also be written using the `describe()` and `it()`
+functions. [`describe()`][] is an alias for [`suite()`][], and [`it()`][] is an
+alias for [`test()`][].
+
+```js
+describe('A thing', () => {
+  it('should work', () => {
+    assert.strictEqual(1, 1);
+  });
+
+  it('should be ok', () => {
+    assert.strictEqual(2, 2);
+  });
+
+  describe('a nested thing', () => {
+    it('should work', () => {
+      assert.strictEqual(3, 3);
+    });
+  });
+});
+```
+
+`describe()` and `it()` are imported from the `node:test` module.
+
+```mjs
+import { describe, it } from 'node:test';
+```
+
+```cjs
+const { describe, it } = require('node:test');
+```
+
+## Skipping tests
+
+Individual tests can be skipped by passing the `skip` option to the test, or by
+calling the test context's `skip()` method as shown in the
+following example.
+
+```js
+// The skip option is used, but no message is provided.
+test('skip option', { skip: true }, (t) => {
+  // This code is never executed.
+});
+
+// The skip option is used, and a message is provided.
+test('skip option with message', { skip: 'this is skipped' }, (t) => {
+  // This code is never executed.
+});
+
+test('skip() method', (t) => {
+  // Make sure to return here as well if the test contains additional logic.
+  t.skip();
+});
+
+test('skip() method with message', (t) => {
+  // Make sure to return here as well if the test contains additional logic.
+  t.skip('this is skipped');
+});
+```
+
 ## TODO tests
 
 Individual tests can be marked as flaky or incomplete by passing the `todo`
@@ -228,7 +262,7 @@ test('todo() method with message', (t) => {
 
 <!-- YAML
 added:
- - REPLACEME
+ - v25.5.0
 -->
 
 This flips the pass/fail reporting for a specific test or suite: A flagged test/test-case must throw
@@ -273,40 +307,6 @@ it.expectFailure('should do the thing', { todo: true }, () => {
 it.todo('should do the thing', { expectFailure: true }, () => {
   assert.strictEqual(doTheThing(), true);
 });
-```
-
-## `describe()` and `it()` aliases
-
-Suites and tests can also be written using the `describe()` and `it()`
-functions. [`describe()`][] is an alias for [`suite()`][], and [`it()`][] is an
-alias for [`test()`][].
-
-```js
-describe('A thing', () => {
-  it('should work', () => {
-    assert.strictEqual(1, 1);
-  });
-
-  it('should be ok', () => {
-    assert.strictEqual(2, 2);
-  });
-
-  describe('a nested thing', () => {
-    it('should work', () => {
-      assert.strictEqual(3, 3);
-    });
-  });
-});
-```
-
-`describe()` and `it()` are imported from the `node:test` module.
-
-```mjs
-import { describe, it } from 'node:test';
-```
-
-```cjs
-const { describe, it } = require('node:test');
 ```
 
 ## `only` tests
@@ -1435,6 +1435,9 @@ added:
   - v18.9.0
   - v16.19.0
 changes:
+  - version: v25.6.0
+    pr-url: https://github.com/nodejs/node/pull/61367
+    description: Add the `env` option.
   - version: v24.7.0
     pr-url: https://github.com/nodejs/node/pull/59443
     description: Added a rerunFailuresFilePath option.
@@ -1555,6 +1558,10 @@ changes:
   * `functionCoverage` {number} Require a minimum percent of covered functions. If code
     coverage does not reach the threshold specified, the process will exit with code `1`.
     **Default:** `0`.
+  * `env` {Object} Specify environment variables to be passed along to the test process.
+    This options is not compatible with `isolation='none'`. These variables will override
+    those from the main process, and are not merged with `process.env`.
+    **Default:** `process.env`.
 * Returns: {TestsStream}
 
 **Note:** `shard` is used to horizontally parallelize test running across

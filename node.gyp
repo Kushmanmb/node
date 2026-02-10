@@ -18,6 +18,8 @@
     'node_shared_hdr_histogram%': 'false',
     'node_shared_http_parser%': 'false',
     'node_shared_libuv%': 'false',
+    'node_shared_lief%': 'false',
+    'node_shared_merve%': 'false',
     'node_shared_nbytes%': 'false',
     'node_shared_nghttp2%': 'false',
     'node_shared_openssl%': 'false',
@@ -113,6 +115,7 @@
       'src/node_config.cc',
       'src/node_config_file.cc',
       'src/node_constants.cc',
+      'src/node_cjs_lexer.cc',
       'src/node_contextify.cc',
       'src/node_credentials.cc',
       'src/node_debug.cc',
@@ -122,6 +125,7 @@
       'src/node_errors.cc',
       'src/node_external_reference.cc',
       'src/node_file.cc',
+      'src/node_file_utils.cc',
       'src/node_http_parser.cc',
       'src/node_http2.cc',
       'src/node_i18n.cc',
@@ -1000,9 +1004,12 @@
             'deps/ncrypto/ncrypto.gyp:ncrypto',
           ],
         }],
-        [ 'node_use_lief=="true"', {
+        [ 'node_use_lief=="true" and node_shared_lief=="false"', {
           'defines': [ 'HAVE_LIEF=1' ],
           'dependencies': [ 'deps/LIEF/lief.gyp:liblief' ],
+        }],
+        [ 'node_use_lief=="true" and node_shared_lief=="true"', {
+          'defines': [ 'HAVE_LIEF=1' ],
         }],
         [ 'node_use_sqlite=="true"', {
           'sources': [
@@ -1422,6 +1429,61 @@
         }],
       ],
     }, # embedtest
+
+    {
+      'target_name': 'shared_embedtest',
+      'type': 'executable',
+
+      'dependencies': [
+        '<(node_lib_target_name)',
+      ],
+
+      # Don't depend on node.gypi - it otherwise links to
+      # the static libraries and resolve symbols at build time.
+      'include_dirs': [
+        'deps/v8/include',
+      ],
+
+      'sources': [
+        'test/embedding/shared_embedtest.cc',
+      ],
+      'conditions': [
+        [ 'node_shared=="true"', {
+          'defines': [
+            'USING_V8_SHARED',
+            'USING_V8_PLATFORM_SHARED',
+          ],
+          'defines!': [
+            'BUILDING_V8_PLATFORM_SHARED=1',
+            'BUILDING_V8_SHARED=1',
+          ],
+        }, {
+          # Only test shared embedding when Node is built as shared library.
+          'type': 'none',
+        }],
+        # Only test platforms known to work.
+        ['OS not in "mac win linux"', {
+          'type': 'none',
+        }],
+        ['OS=="win"', {
+          'libraries': [
+            'Dbghelp.lib',
+            'winmm.lib',
+            'Ws2_32.lib',
+          ],
+        }],
+        ['OS=="mac"', {
+          'xcode_settings': {
+            'OTHER_LDFLAGS': [ '-Wl,-rpath,@loader_path', ],
+          }
+        }],
+        ['OS=="linux"', {
+          'ldflags': [
+            '-Wl,-rpath,\\$$ORIGIN'
+          ],
+        }],
+      ],
+    }, # shared_embedtest
 
     {
       'target_name': 'overlapped-checker',

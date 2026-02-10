@@ -226,6 +226,10 @@
         'dependencies': [ 'deps/ada/ada.gyp:ada' ],
     }],
 
+    [ 'node_shared_merve=="false"', {
+        'dependencies': [ 'deps/merve/merve.gyp:merve' ],
+    }],
+
     [ 'node_shared_simdjson=="false"', {
         'dependencies': [ 'deps/simdjson/simdjson.gyp:simdjson' ],
     }],
@@ -244,6 +248,7 @@
 
     [ 'node_shared_zstd=="false"', {
       'dependencies': [ 'deps/zstd/zstd.gyp:zstd' ],
+      'defines': [ 'NODE_BUNDLED_ZSTD' ],
     }],
 
     [ 'OS=="mac"', {

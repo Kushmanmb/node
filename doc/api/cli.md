@@ -405,7 +405,7 @@ Error: Access to this API has been restricted
 
 <!-- YAML
 added:
-  - REPLACEME
+  - v25.5.0
 -->
 
 > Stability: 1.1 - Active development
@@ -425,6 +425,7 @@ added: v18.8.0
 changes:
   - version:
     - v25.4.0
+    - v24.13.1
     pr-url: https://github.com/nodejs/node/pull/60954
     description: The snapshot building process is no longer experimental.
 -->
@@ -493,6 +494,7 @@ added:
 changes:
   - version:
     - v25.4.0
+    - v24.13.1
     pr-url: https://github.com/nodejs/node/pull/60954
     description: The snapshot building process is no longer experimental.
 -->
@@ -832,15 +834,6 @@ added: v6.0.0
 
 Enable FIPS-compliant crypto at startup. (Requires Node.js to be built
 against FIPS-compatible OpenSSL.)
-
-### `--enable-network-family-autoselection`
-
-<!-- YAML
-added: v18.18.0
--->
-
-Enables the family autoselection algorithm unless connection options explicitly
-disables it.
 
 ### `--enable-source-maps`
 
@@ -1274,7 +1267,7 @@ Use this flag to enable [ShadowRealm][] support.
 
 <!-- YAML
 added:
-  - REPLACEME
+  - v25.5.0
 -->
 
 > Stability: 1.1 - Active Development
@@ -1524,6 +1517,7 @@ added:
 changes:
   - version:
     - v25.4.0
+    - v24.13.1
     pr-url: https://github.com/nodejs/node/pull/60956
     description: The flag is no longer experimental.
 -->
@@ -1693,26 +1687,6 @@ When enabled, the parser will accept the following:
 All the above will expose your application to request smuggling
 or poisoning attack. Avoid using this option.
 
-<!-- Anchor to make sure old links find a target -->
-
-<a id="inspector_security"></a>
-
-#### Warning: binding inspector to a public IP:port combination is insecure
-
-Binding the inspector to a public IP (including `0.0.0.0`) with an open port is
-insecure, as it allows external hosts to connect to the inspector and perform
-a [remote code execution][] attack.
-
-If specifying a host, make sure that either:
-
-* The host is not accessible from public networks.
-* A firewall disallows unwanted connections on the port.
-
-**More specifically, `--inspect=0.0.0.0` is insecure if the port (`9229` by
-default) is not firewall-protected.**
-
-See the [debugging security implications][] section for more information.
-
 ### `--inspect-brk[=[host:]port]`
 
 <!-- YAML
@@ -1724,6 +1698,9 @@ Default `host:port` is `127.0.0.1:9229`. If port `0` is specified,
 a random available port will be used.
 
 See [V8 Inspector integration for Node.js][] for further explanation on Node.js debugger.
+
+See the [security warning][] below regarding the `host`
+parameter usage.
 
 ### `--inspect-port=[host:]port`
 
@@ -1762,6 +1739,9 @@ a random available port will be used.
 
 See [V8 Inspector integration for Node.js][] for further explanation on Node.js debugger.
 
+See the [security warning][] below regarding the `host`
+parameter usage.
+
 ### `--inspect[=[host:]port]`
 
 <!-- YAML
@@ -1775,6 +1755,26 @@ V8 inspector integration allows tools such as Chrome DevTools and IDEs to debug
 and profile Node.js instances. The tools attach to Node.js instances via a
 tcp port and communicate using the [Chrome DevTools Protocol][].
 See [V8 Inspector integration for Node.js][] for further explanation on Node.js debugger.
+
+<!-- Anchor to make sure old links find a target -->
+
+<a id="inspector_security"></a>
+
+#### Warning: binding inspector to a public IP:port combination is insecure
+
+Binding the inspector to a public IP (including `0.0.0.0`) with an open port is
+insecure, as it allows external hosts to connect to the inspector and perform
+a [remote code execution][] attack.
+
+If specifying a host, make sure that either:
+
+* The host is not accessible from public networks.
+* A firewall disallows unwanted connections on the port.
+
+**More specifically, `--inspect=0.0.0.0` is insecure if the port (`9229` by
+default) is not firewall-protected.**
+
+See the [debugging security implications][] section for more information.
 
 ### `-i`, `--interactive`
 
@@ -2294,7 +2294,7 @@ Write reports in a compact format, single-line JSON, more easily consumable
 by log processing systems than the default multi-line format designed for
 human consumption.
 
-### `--report-dir=directory`, `report-directory=directory`
+### `--report-dir=directory`, `--report-directory=directory`
 
 <!-- YAML
 added: v11.8.0

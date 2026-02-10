@@ -104,7 +104,7 @@ exposed by this class execute synchronously.
 <!-- YAML
 added: v22.5.0
 changes:
-  - version: REPLACEME
+  - version: v25.5.0
     pr-url: https://github.com/nodejs/node/pull/61266
     description: Enable `defensive` by default.
   - version:
@@ -1102,7 +1102,9 @@ called directly.
 <!-- YAML
 added: v24.9.0
 changes:
-  - version: v25.4.0
+  - version:
+     - v25.5.0
+     - v24.13.1
     pr-url: https://github.com/nodejs/node/pull/60246
     description: Changed from a method to a getter.
 -->

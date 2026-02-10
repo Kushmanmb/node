@@ -58,9 +58,7 @@ icu_versions = json.loads((tools_path / 'icu' / 'icu_versions.json').read_text(e
 maglev_enabled_architectures = ('x64', 'arm', 'arm64', 's390x')
 
 # builtins may be removed later if they have been disabled by options
-shareable_builtins = {'cjs_module_lexer/lexer': 'deps/cjs-module-lexer/lexer.js',
-                     'cjs_module_lexer/dist/lexer': 'deps/cjs-module-lexer/dist/lexer.js',
-                     'undici/undici': 'deps/undici/undici.js',
+shareable_builtins = {'undici/undici': 'deps/undici/undici.js',
                      'amaro/dist/index': 'deps/amaro/dist/index.js'
 }
 
@@ -357,6 +355,28 @@ shared_optgroup.add_argument('--shared-libuv-libpath',
     dest='shared_libuv_libpath',
     help='a directory to search for the shared libuv DLL')
 
+shared_optgroup.add_argument('--shared-lief',
+    action='store_true',
+    dest='shared_lief',
+    default=None,
+    help='link to a shared lief DLL instead of static linking')
+
+shared_optgroup.add_argument('--shared-lief-includes',
+    action='store',
+    dest='shared_lief_includes',
+    help='directory containing lief header files')
+
+shared_optgroup.add_argument('--shared-lief-libname',
+    action='store',
+    dest='shared_lief_libname',
+    default='LIEF',
+    help='alternative lib name to link to [default: %(default)s]')
+
+shared_optgroup.add_argument('--shared-lief-libpath',
+    action='store',
+    dest='shared_lief_libpath',
+    help='a directory to search for the shared lief DLL')
+
 shared_optgroup.add_argument('--shared-nbytes',
     action='store_true',
     dest='shared_nbytes',
@@ -556,7 +576,6 @@ shared_optgroup.add_argument('--shared-simdutf-libpath',
     dest='shared_simdutf_libpath',
     help='a directory to search for the shared simdutf DLL')
 
-
 shared_optgroup.add_argument('--shared-ada',
     action='store_true',
     dest='shared_ada',
@@ -578,6 +597,28 @@ shared_optgroup.add_argument('--shared-ada-libpath',
     action='store',
     dest='shared_ada_libpath',
     help='a directory to search for the shared ada DLL')
+
+shared_optgroup.add_argument('--shared-merve',
+    action='store_true',
+    dest='shared_merve',
+    default=None,
+    help='link to a shared merve DLL instead of static linking')
+
+shared_optgroup.add_argument('--shared-merve-includes',
+    action='store',
+    dest='shared_merve_includes',
+    help='directory containing merve header files')
+
+shared_optgroup.add_argument('--shared-merve-libname',
+    action='store',
+    dest='shared_merve_libname',
+    default='merve',
+    help='alternative lib name to link to [default: %(default)s]')
+
+shared_optgroup.add_argument('--shared-merve-libpath',
+    action='store',
+    dest='shared_merve_libpath',
+    help='a directory to search for the shared merve DLL')
 
 shared_optgroup.add_argument('--shared-brotli',
     action='store_true',
@@ -1239,10 +1280,16 @@ def try_check_compiler(cc, lang):
                      b'__clang_major__ __clang_minor__ __clang_patchlevel__ '
                      b'__APPLE__')
 
+    cc_out = proc.communicate()
+    cc_stdout = to_utf8(cc_out[0])
     if sys.platform == 'zos':
-      values = (to_utf8(proc.communicate()[0]).split('\n')[-2].split() + ['0'] * 7)[0:8]
+      values = (cc_stdout.split('\n')[-2].split() + ['0'] * 7)[0:8]
     else:
-      values = (to_utf8(proc.communicate()[0]).split() + ['0'] * 7)[0:8]
+      values = (cc_stdout.split() + ['0'] * 7)[0:8]
+
+  if len(values) < 8:
+    cc_stderr = to_utf8(cc_out[1]) if cc_out[1] else ''
+    raise Exception(f'Could not determine compiler version info. \nstdout:\n{cc_stdout}\nstderr:\n{cc_stderr}')
 
   is_clang = values[0] == '1'
   gcc_version = tuple(map(int, values[1:1+3]))
@@ -1969,12 +2016,21 @@ def configure_library(lib, output, pkgname=None):
 
 
 def configure_v8(o, configs):
-  set_configuration_variable(configs, 'v8_enable_v8_checks', release=1, debug=0)
+  set_configuration_variable(configs, 'v8_enable_v8_checks', release=0, debug=1)
 
   o['variables']['v8_enable_webassembly'] = 0 if options.v8_lite_mode else 1
   o['variables']['v8_enable_javascript_promise_hooks'] = 1
   o['variables']['v8_enable_lite_mode'] = 1 if options.v8_lite_mode else 0
-  o['variables']['v8_enable_gdbjit'] = 1 if options.gdb else 0
+  is_gdbjit_supported_arch = (
+      'x64' in o['variables']['target_arch'] or
+      'ia32' in o['variables']['target_arch'] or
+      'ppc64' in o['variables']['target_arch']
+  )
+  is_linux = flavor == 'linux'
+  if (options.gdb is not None):
+    o['variables']['v8_enable_gdbjit'] = 1 if options.gdb else 0
+  else:
+    o['variables']['v8_enable_gdbjit'] = 1 if is_gdbjit_supported_arch and is_linux else 0
   o['variables']['v8_optimized_debug'] = 0 if options.v8_non_optimized_debug else 1
   o['variables']['dcheck_always_on'] = 1 if options.v8_with_dchecks else 0
   o['variables']['v8_enable_object_print'] = 0 if options.v8_disable_object_print else 1
@@ -2100,6 +2156,14 @@ def configure_openssl(o):
   configure_library('openssl', o)
 
   o['variables']['openssl_version'] = get_openssl_version(o)
+
+def configure_lief(o):
+  if options.without_lief:
+    if options.shared_lief:
+      error('--without-lief is incompatible with --shared-lief')
+    return
+
+  configure_library('lief', o, pkgname='LIEF')
 
 def configure_sqlite(o):
   o['variables']['node_use_sqlite'] = b(not options.without_sqlite)
@@ -2558,10 +2622,12 @@ configure_library('brotli', output, pkgname=['libbrotlidec', 'libbrotlienc'])
 configure_library('cares', output, pkgname='libcares')
 configure_library('gtest', output)
 configure_library('hdr_histogram', output)
+configure_library('merve', output)
 configure_library('nbytes', output)
 configure_library('nghttp2', output, pkgname='libnghttp2')
 configure_library('nghttp3', output, pkgname='libnghttp3')
 configure_library('ngtcp2', output, pkgname='libngtcp2')
+configure_lief(output);
 configure_sqlite(output);
 configure_library('temporal_capi', output)
 configure_library('uvwasi', output)
@@ -2600,11 +2666,10 @@ config_release_vars = configurations['Release']['variables']
 del configurations['Release']['variables']
 config_debug_vars = configurations['Debug']['variables']
 del configurations['Debug']['variables']
-output['conditions'].append(['build_type=="Release"', {
-  'variables': config_release_vars,
-}, {
-  'variables': config_debug_vars,
-}])
+if options.debug:
+  variables = variables | config_debug_vars
+else:
+  variables = variables | config_release_vars
 
 # make_global_settings should be a root level element too
 if 'make_global_settings' in output:
