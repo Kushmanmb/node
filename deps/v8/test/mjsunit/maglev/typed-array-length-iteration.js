@@ -4,6 +4,10 @@
 //
 // Flags: --allow-natives-syntax --maglev --no-turbofan
 // Flags: --typed-array-length-loading
+// Flags: --mock-arraybuffer-allocator
+
+// Using --mock-arraybuffer-allocator makes the big array buffer allocation
+// always succeed. This test doesn't access the memory, so it's fine.
 
 function foo(size) {
   let a = new Uint8Array(size);
@@ -24,7 +28,7 @@ foo(100);
 %OptimizeMaglevOnNextCall(foo);
 const a = foo(100);
 assertEquals(100, a.length);
-assertTrue(isMaglevved(foo));
+assertMaglevved(foo);
 
 // If we create a large JSTypedArray (length doesn't fit in Smi), we'll deopt
 // because the large length doesn't match the existing feedback for
@@ -33,5 +37,5 @@ if (%Is64Bit()) {
   const largeLength = 8589934592;
   const a2 = foo(largeLength);
   assertEquals(largeLength, a2.length);
-  assertFalse(isMaglevved(foo));
+  assertNotMaglevved(foo);
 }

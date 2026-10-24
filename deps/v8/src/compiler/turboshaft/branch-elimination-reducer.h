@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "src/base/bits.h"
+#include "src/base/iterator.h"
 #include "src/base/logging.h"
 #include "src/compiler/turboshaft/assembler.h"
 #include "src/compiler/turboshaft/index.h"
@@ -371,6 +372,19 @@ class BranchEliminationReducer : public Next {
       goto no_change;
     }
 
+    if (!__ CanCreateNVariables(destination_origin->OpCountUpperBound())) {
+      goto no_change;
+    }
+
+    // Do not clone blocks containing deoptimization points. These may have a
+    // significant metadata overhead.
+    for (const Operation& op :
+         __ input_graph().operations(*destination_origin)) {
+      if (op.Is<DeoptimizeIfOp>()) {
+        goto no_change;
+      }
+    }
+
     if (const BranchOp* branch = last_op.template TryCast<BranchOp>()) {
       V<Word32> condition =
           __ template MapToNewGraph<true>(branch->condition());
@@ -443,8 +457,8 @@ class BranchEliminationReducer : public Next {
     goto no_change;
   }
 
-  V<None> REDUCE(DeoptimizeIf)(V<Word32> condition, V<FrameState> frame_state,
-                               bool negated,
+  V<None> REDUCE(DeoptimizeIf)(V<Word32> condition,
+                               V<EagerFrameState> frame_state, bool negated,
                                const DeoptimizeParameters* parameters) {
     LABEL_BLOCK(no_change) {
       return Next::ReduceDeoptimizeIf(condition, frame_state, negated,
@@ -472,8 +486,9 @@ class BranchEliminationReducer : public Next {
   }
 
 #if V8_ENABLE_WEBASSEMBLY
-  V<None> REDUCE(TrapIf)(V<Word32> condition, OptionalV<FrameState> frame_state,
-                         bool negated, const TrapId trap_id) {
+  V<None> REDUCE(TrapIf)(V<Word32> condition,
+                         OptionalV<EagerFrameState> frame_state, bool negated,
+                         const TrapId trap_id) {
     LABEL_BLOCK(no_change) {
       return Next::ReduceTrapIf(condition, frame_state, negated, trap_id);
     }
@@ -586,8 +601,7 @@ class BranchEliminationReducer : public Next {
     // Actually does the replaying, starting from the oldest block and finishing
     // with the newest one (so that they will later be removed in the correct
     // order).
-    for (auto it = missing_blocks.rbegin(); it != missing_blocks.rend(); ++it) {
-      Block* block = *it;
+    for (Block* block : base::Reversed(missing_blocks)) {
       StartLayer(block);
 
       if (block->IsBranchTarget()) {

@@ -24,13 +24,15 @@ class MaglevGraphLabeller {
   struct NodeInfo {
     int label = -1;
     Provenance provenance;
+    int line_number = -1;
   };
 
   void RegisterNode(const NodeBase* node, const MaglevCompilationUnit* unit,
                     BytecodeOffset bytecode_offset, SourcePosition position) {
     if (nodes_
             .emplace(node, NodeInfo{next_node_label_,
-                                    {unit, bytecode_offset, position}})
+                                    {unit, bytecode_offset, position},
+                                    -1})
             .second) {
       next_node_label_++;
     }
@@ -47,6 +49,13 @@ class MaglevGraphLabeller {
   int NodeId(const NodeBase* node) { return nodes_[node].label; }
   const Provenance& GetNodeProvenance(const NodeBase* node) {
     return nodes_[node].provenance;
+  }
+
+  void SetNodeLineNumber(const NodeBase* node, int line_number) {
+    nodes_[node].line_number = line_number;
+  }
+  int GetNodeLineNumber(const NodeBase* node) {
+    return nodes_[node].line_number;
   }
 
   int max_node_id() const { return next_node_label_ - 1; }
@@ -86,13 +95,14 @@ class MaglevGraphLabeller {
       os << ":" << input.operand();
     }
   }
+  const std::map<const NodeBase*, NodeInfo>& nodes() const { return nodes_; }
 
  private:
   std::map<const NodeBase*, NodeInfo> nodes_;
   int next_node_label_ = 1;
 };
 
-class MaglevGraphLabellerScope {
+class V8_EXPORT_PRIVATE MaglevGraphLabellerScope {
  public:
   explicit MaglevGraphLabellerScope(MaglevGraphLabeller* graph_labeller);
   ~MaglevGraphLabellerScope();
@@ -104,7 +114,7 @@ MaglevGraphLabeller* GetCurrentGraphLabeller();
 
 #ifdef V8_ENABLE_MAGLEV_GRAPH_PRINTER
 
-class PrintNode {
+class V8_EXPORT_PRIVATE PrintNode {
  public:
   explicit PrintNode(const NodeBase* node, bool has_regalloc_data = false,
                      bool skip_targets = false)
@@ -122,11 +132,24 @@ class PrintNode {
   const bool skip_targets_;
 };
 
-class PrintNodeLabel {
+class V8_EXPORT_PRIVATE PrintNodeLabel {
  public:
   explicit PrintNodeLabel(const NodeBase* node) : node_(node) {}
 
   void Print(std::ostream& os) const;
+
+ private:
+  const NodeBase* node_;
+};
+
+class PrintNodeBrief {
+ public:
+  explicit PrintNodeBrief(const NodeBase* node) : node_(node) {}
+
+  void Print(std::ostream& os) const {
+    PrintNodeLabel(node_).Print(os);
+    os << " (" << OpcodeToString(node_->opcode()) << ")";
+  }
 
  private:
   const NodeBase* node_;
@@ -147,6 +170,12 @@ class PrintNodeLabel {
   void Print(std::ostream& os) const {}
 };
 
+class PrintNodeBrief {
+ public:
+  explicit PrintNodeBrief(const NodeBase* node) {}
+  void Print(std::ostream& os) const {}
+};
+
 #endif  // V8_ENABLE_MAGLEV_GRAPH_PRINTER
 
 inline std::ostream& operator<<(std::ostream& os, const PrintNode& printer) {
@@ -156,6 +185,12 @@ inline std::ostream& operator<<(std::ostream& os, const PrintNode& printer) {
 
 inline std::ostream& operator<<(std::ostream& os,
                                 const PrintNodeLabel& printer) {
+  printer.Print(os);
+  return os;
+}
+
+inline std::ostream& operator<<(std::ostream& os,
+                                const PrintNodeBrief& printer) {
   printer.Print(os);
   return os;
 }

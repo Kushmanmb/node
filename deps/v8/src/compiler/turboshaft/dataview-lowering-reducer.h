@@ -52,6 +52,7 @@ class DataViewLoweringReducer : public Next {
       case kExternalBigUint64Array:
         return __ Word64ReverseBytes(value);
     }
+    UNREACHABLE();
   }
 
   OpIndex REDUCE(LoadDataViewElement)(V<Object> object, V<WordPtr> storage,
@@ -88,6 +89,7 @@ class DataViewLoweringReducer : public Next {
     // alive so that the GC will not release the JSArrayBuffer (if there's any)
     // as long as we are still operating on it.
     __ Retain(object);
+
     return Asm().GetVariable(result);
   }
 
@@ -124,6 +126,7 @@ class DataViewLoweringReducer : public Next {
     // alive so that the GC will not release the JSArrayBuffer (if there's any)
     // as long as we are still operating on it.
     __ Retain(object);
+
     return {};
   }
 };

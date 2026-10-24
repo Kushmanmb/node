@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "node.h"
 #include "node_exit_code.h"
 
 namespace node {
@@ -29,6 +30,8 @@ enum class SeaFlags : uint32_t {
   kUseCodeCache = 1 << 2,
   kIncludeAssets = 1 << 3,
   kIncludeExecArgv = 1 << 4,
+  kEnableVfs = 1 << 5,
+  kVfsArchive = 1 << 6,
 };
 
 enum class SeaExecArgvExtension : uint8_t {
@@ -43,8 +46,10 @@ struct SeaConfig {
   std::string executable_path;
   SeaFlags flags = SeaFlags::kDefault;
   SeaExecArgvExtension exec_argv_extension = SeaExecArgvExtension::kEnv;
+  ModuleFormat main_format = ModuleFormat::kCommonJS;
   std::unordered_map<std::string, std::string> assets;
   std::vector<std::string> exec_argv;
+  std::string vfs_archive_path;
 };
 
 struct SeaResource {
@@ -52,21 +57,26 @@ struct SeaResource {
   SeaExecArgvExtension exec_argv_extension = SeaExecArgvExtension::kEnv;
   std::string_view code_path;
   std::string_view main_code_or_snapshot;
+  ModuleFormat main_code_format = ModuleFormat::kCommonJS;
   std::optional<std::string_view> code_cache;
   std::unordered_map<std::string_view, std::string_view> assets;
   std::vector<std::string_view> exec_argv;
 
   bool use_snapshot() const;
   bool use_code_cache() const;
+  bool use_vfs_archive() const;
 
-  static constexpr size_t kHeaderSize =
-      sizeof(kMagic) + sizeof(SeaFlags) + sizeof(SeaExecArgvExtension);
+  static constexpr size_t kHeaderSize = sizeof(kMagic) + sizeof(SeaFlags) +
+                                        sizeof(SeaExecArgvExtension) +
+                                        sizeof(ModuleFormat);
 };
 
 bool IsSingleExecutable();
 std::string_view FindSingleExecutableBlob();
-SeaResource FindSingleExecutableResource();
-std::tuple<int, char**> FixupArgsForSEA(int argc, char** argv);
+const SeaResource& FindSingleExecutableResource();
+std::tuple<int, char**> FixupArgsForSEA(int argc,
+                                        char** argv,
+                                        std::vector<std::string>* errors);
 node::ExitCode WriteSingleExecutableBlob(
     const std::string& config_path,
     const std::vector<std::string>& args,

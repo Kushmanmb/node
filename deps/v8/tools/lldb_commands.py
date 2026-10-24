@@ -219,6 +219,12 @@ def jst(debugger, *args):
 
 
 @lldbCommand
+def jstc(debugger, *args):
+  """Print the current JavaScript stack trace in a concise format"""
+  no_arg_cmd(debugger, "_v8_internal_Print_StackTraceConcise()")
+
+
+@lldbCommand
 def pn(debugger, param, *args):
   """Print a v8 TurboFan graph node"""
   CMD = "_v8_internal_Node_Print((void*)({}))"
@@ -276,9 +282,9 @@ def jomb(debugger, param, *args):
 @lldbCommand
 def bta(debugger, *args):
   """Print stack trace with assertion scopes"""
-  func_name_re = re.compile("([^(<]+)(?:\(.+\))?")
+  func_name_re = re.compile(r"([^(<]+)(?:\(.+\))?")
   assert_re = re.compile(
-      "^v8::internal::Per\w+AssertType::(\w+)_ASSERT, (false|true)>")
+      r"^v8::internal::Per\w+AssertType::(\w+)_ASSERT, (false|true)>")
   thread = current_thread(debugger)
   for frame in thread:
     functionSignature = frame.GetDisplayFunctionName()

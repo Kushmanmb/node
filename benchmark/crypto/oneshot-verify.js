@@ -1,7 +1,7 @@
 'use strict';
 
 const common = require('../common.js');
-const { hasOpenSSL } = require('../../test/common/crypto.js');
+const { hasOpenSSL, isBoringSSL } = require('../../test/common/crypto.js');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -26,24 +26,30 @@ const keyFixtures = {
 
 if (hasOpenSSL(3, 5)) {
   keyFixtures['ml-dsa-44'] = readKeyPair('ml_dsa_44_public', 'ml_dsa_44_private');
+} else if (isBoringSSL) {
+  keyFixtures['ml-dsa-44'] = readKeyPair('ml_dsa_44_public', 'ml_dsa_44_private_seed_only');
 }
 
 const data = crypto.randomBytes(256);
 
-let pems;
-let keyObjects;
-
 const bench = common.createBenchmark(main, {
   keyType: Object.keys(keyFixtures),
   mode: ['sync', 'async', 'async-parallel'],
-  keyFormat: ['pem', 'der', 'jwk', 'keyObject', 'keyObject.unique'],
+  keyFormat: ['pem', 'der', 'jwk', 'keyObject', 'keyObject.unique', 'raw-public'],
   n: [1e3],
 }, {
   combinationFilter(p) {
     // "keyObject.unique" allows to compare the result with "keyObject" to
     // assess whether mutexes over the key material impact the operation
-    return p.keyFormat !== 'keyObject.unique' ||
-      (p.keyFormat === 'keyObject.unique' && p.mode === 'async-parallel');
+    if (p.keyFormat === 'keyObject.unique')
+      return p.mode === 'async-parallel';
+    // Compare execution modes with pre-imported keys; measure parsing synchronously.
+    if (p.mode !== 'sync' && p.keyFormat !== 'keyObject')
+      return false;
+    // raw-public is not supported by rsa
+    if (p.keyFormat === 'raw-public')
+      return p.keyType !== 'rsa';
+    return true;
   },
 });
 
@@ -98,8 +104,16 @@ function measureAsyncParallel(n, digest, signature, publicKey, keys) {
 }
 
 function main({ n, mode, keyFormat, keyType }) {
-  pems ||= [...Buffer.alloc(n)].map(() => keyFixtures[keyType].publicKey);
-  keyObjects ||= pems.map(crypto.createPublicKey);
+  const count = keyFormat === 'keyObject.unique' ? n : 1;
+  const pems = Array(count).fill(keyFixtures[keyType].publicKey);
+  const keyObjects = pems.map(crypto.createPublicKey);
+
+  // Warm up OpenSSL's provider operation cache for each key object
+  const warmupDigest = keyType === 'rsa' || keyType === 'ec' ? 'sha256' : null;
+  const warmupSig = crypto.sign(warmupDigest, data, keyFixtures[keyType].privateKey);
+  for (const keyObject of keyObjects) {
+    crypto.verify(warmupDigest, data, keyObject, warmupSig);
+  }
 
   let publicKey, keys, digest;
 
@@ -128,6 +142,13 @@ function main({ n, mode, keyFormat, keyType }) {
     }
     case 'der': {
       publicKey = { key: keyObjects[0].export({ format: 'der', type: 'spki' }), format: 'der', type: 'spki' };
+      break;
+    }
+    case 'raw-public': {
+      const exportedKey = keyObjects[0].export({ format: 'raw-public' });
+      const keyOpts = { key: exportedKey, format: 'raw-public', asymmetricKeyType: keyType };
+      if (keyType === 'ec') keyOpts.namedCurve = keyObjects[0].asymmetricKeyDetails.namedCurve;
+      publicKey = keyOpts;
       break;
     }
     case 'keyObject.unique':

@@ -24,8 +24,7 @@ InterpreterTester::InterpreterTester(
     : isolate_(isolate),
       source_(source),
       bytecode_(bytecode),
-      feedback_metadata_(feedback_metadata) {
-}
+      feedback_metadata_(feedback_metadata) {}
 
 InterpreterTester::InterpreterTester(
     Isolate* isolate, Handle<BytecodeArray> bytecode,
@@ -71,6 +70,34 @@ std::string InterpreterTester::function_name() {
 }
 
 const char InterpreterTester::kFunctionName[] = "f";
+
+template <typename EmbeddedFeedbackType>
+  requires std::is_same_v<EmbeddedFeedbackType, CompareOperationFeedback> ||
+           std::is_same_v<EmbeddedFeedbackType, BinaryOperationFeedback>
+EmbeddedFeedbackType::Type InterpreterTester::GetEmbeddedFeedback(
+    Token::Value token, size_t bytecode_offset, int feedback_value_offset) {
+  if constexpr (std::is_same_v<EmbeddedFeedbackType,
+                               CompareOperationFeedback>) {
+    DCHECK(Token::IsCompareOpWithEmbeddedFeedback(token));
+  } else if constexpr (std::is_same_v<EmbeddedFeedbackType,
+                                      BinaryOperationFeedback>) {
+    DCHECK(Token::IsBinaryOpWithEmbeddedFeedback(token) ||
+           Token::IsUnaryOpWithEmbeddedFeedback(token));
+  }
+
+  auto bytecode_array = bytecode_.ToHandleChecked();
+  uint8_t feedback_index = bytecode_array->get(
+      static_cast<int>(bytecode_offset) + feedback_value_offset);
+  return EmbeddedFeedbackType::DecodeTypeIndex(
+      static_cast<EmbeddedFeedbackType::TypeIndex>(feedback_index));
+}
+
+template CompareOperationFeedback::Type
+InterpreterTester::GetEmbeddedFeedback<CompareOperationFeedback>(Token::Value,
+                                                                 size_t, int);
+template BinaryOperationFeedback::Type
+InterpreterTester::GetEmbeddedFeedback<BinaryOperationFeedback>(Token::Value,
+                                                                size_t, int);
 
 }  // namespace interpreter
 }  // namespace internal

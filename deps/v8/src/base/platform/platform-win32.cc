@@ -564,7 +564,7 @@ void OS::ExitProcess(int exit_code) {
 // for output. However, if the application is linked as a GUI application,
 // the process doesn't have a console, and therefore (debugging) output is lost.
 // This is the case if we are embedded in a windows program (like a browser).
-// In order to be able to get debug output in this case the the debugging
+// In order to be able to get debug output in this case the debugging
 // facility using OutputDebugString. This output goes to the active debugger
 // for the process (if any). Else the output can be monitored using DBMON.EXE.
 
@@ -610,7 +610,7 @@ static void VPrintHelper(FILE* stream, const char* format, va_list args) {
 }
 
 // Convert utf-8 encoded string to utf-16 encoded.
-static std::wstring ConvertUtf8StringToUtf16(const char* str) {
+std::wstring OS::ConvertUtf8StringToUtf16(const char* str) {
   // On Windows wchar_t must be a 16-bit value.
   static_assert(sizeof(wchar_t) == 2, "wrong wchar_t size");
   std::wstring utf16_str;
@@ -782,8 +782,8 @@ bool UserShadowStackEnabled() {
 
 }  // namespace
 
-void OS::Initialize(AbortMode abort_mode, const char* const gc_fake_mmap) {
-  g_abort_mode = abort_mode;
+void OS::Initialize(const char* const gc_fake_mmap) {
+  // This is only used on Posix, we don't need to use it for anything.
 }
 
 typedef PVOID(__stdcall* VirtualAlloc2_t)(HANDLE, PVOID, SIZE_T, ULONG, ULONG,
@@ -995,9 +995,10 @@ void CheckIsOOMError(int error) {
 
 // static
 void* OS::Allocate(void* hint, size_t size, size_t alignment,
-                   MemoryPermission access, PlatformSharedMemoryHandle handle) {
+                   MemoryPermission access,
+                   std::optional<SharedMemoryHandle> handle) {
   // File handles aren't supported.
-  DCHECK_EQ(handle, kInvalidSharedMemoryHandle);
+  DCHECK(!handle.has_value());
 
   size_t page_size = AllocatePageSize();
   DCHECK_EQ(0, size % page_size);
@@ -1023,7 +1024,7 @@ void OS::Free(void* address, size_t size) {
 
 // static
 void* OS::AllocateShared(void* hint, size_t size, MemoryPermission permission,
-                         PlatformSharedMemoryHandle handle, uint64_t offset) {
+                         SharedMemoryHandle handle, uint64_t offset) {
   DCHECK_EQ(0, reinterpret_cast<uintptr_t>(hint) % AllocatePageSize());
   DCHECK_EQ(0, size % AllocatePageSize());
   DCHECK_EQ(0, offset % AllocatePageSize());
@@ -1032,7 +1033,7 @@ void* OS::AllocateShared(void* hint, size_t size, MemoryPermission permission,
   DWORD off_lo = static_cast<DWORD>(offset);
   DWORD access = GetFileViewAccessFromMemoryPermission(permission);
 
-  HANDLE file_mapping = FileMappingFromSharedMemoryHandle(handle);
+  HANDLE file_mapping = handle.GetPlatformHandle();
   void* result =
       MapViewOfFileEx(file_mapping, access, off_hi, off_lo, size, hint);
 
@@ -1081,6 +1082,12 @@ void OS::SetDataReadOnly(void* address, size_t size) {
   DWORD old_protection;
   CHECK(VirtualProtect(address, size, PAGE_READONLY, &old_protection));
   CHECK(old_protection == PAGE_READWRITE || old_protection == PAGE_WRITECOPY);
+}
+
+bool OS::SetMemoryRegionName(const void* address, size_t size,
+                             const char* name) {
+  // Not implemented on Windows.
+  return false;
 }
 
 // static
@@ -1142,9 +1149,9 @@ bool OS::CanReserveAddressSpace() {
 // static
 std::optional<AddressSpaceReservation> OS::CreateAddressSpaceReservation(
     void* hint, size_t size, size_t alignment, MemoryPermission max_permission,
-    PlatformSharedMemoryHandle handle) {
+    std::optional<SharedMemoryHandle> handle) {
   // File handles aren't supported.
-  DCHECK_EQ(handle, kInvalidSharedMemoryHandle);
+  DCHECK(!handle.has_value());
   CHECK(CanReserveAddressSpace());
 
   size_t page_size = AllocatePageSize();
@@ -1168,17 +1175,17 @@ void OS::FreeAddressSpaceReservation(AddressSpaceReservation reservation) {
 }
 
 // static
-PlatformSharedMemoryHandle OS::CreateSharedMemoryHandleForTesting(size_t size) {
+std::optional<SharedMemoryHandle> OS::CreateSharedMemoryHandleForTesting(
+    size_t size) {
   HANDLE handle = CreateFileMapping(INVALID_HANDLE_VALUE, nullptr,
                                     PAGE_READWRITE, 0, size, nullptr);
-  if (!handle) return kInvalidSharedMemoryHandle;
-  return SharedMemoryHandleFromFileMapping(handle);
+  if (!handle) return std::nullopt;
+  return SharedMemoryHandle::FromPlatformHandle(handle);
 }
 
 // static
-void OS::DestroySharedMemoryHandle(PlatformSharedMemoryHandle handle) {
-  DCHECK_NE(kInvalidSharedMemoryHandle, handle);
-  HANDLE file_mapping = FileMappingFromSharedMemoryHandle(handle);
+void OS::DestroySharedMemoryHandle(SharedMemoryHandle handle) {
+  HANDLE file_mapping = handle.GetPlatformHandle();
   CHECK(CloseHandle(file_mapping));
 }
 
@@ -1409,13 +1416,13 @@ bool AddressSpaceReservation::Free(void* address, size_t size) {
 
 bool AddressSpaceReservation::AllocateShared(void* address, size_t size,
                                              OS::MemoryPermission access,
-                                             PlatformSharedMemoryHandle handle,
+                                             SharedMemoryHandle handle,
                                              uint64_t offset) {
   DCHECK(Contains(address, size));
   CHECK(MapViewOfFile3);
 
   DWORD protect = GetProtectionFromMemoryPermission(access);
-  HANDLE file_mapping = FileMappingFromSharedMemoryHandle(handle);
+  HANDLE file_mapping = handle.GetPlatformHandle();
   return MapViewOfFile3(file_mapping, GetCurrentProcess(), address, offset,
                         size, MEM_REPLACE_PLACEHOLDER, protect, nullptr, 0);
 }
@@ -1740,7 +1747,7 @@ static const HANDLE kNoThread = INVALID_HANDLE_VALUE;
 // convention.
 static unsigned int __stdcall ThreadEntry(void* arg) {
   Thread* thread = reinterpret_cast<Thread*>(arg);
-  thread->NotifyStartedAndRun();
+  thread->NotifyStartedAndDispatch();
   return 0;
 }
 
@@ -1873,6 +1880,57 @@ Stack::StackSlot Stack::ObtainCurrentThreadStackStart() {
   return reinterpret_cast<void*>(highLimit);
 #else
 #error Unsupported ObtainCurrentThreadStackStart.
+#endif
+}
+
+// static
+Stack::StackSlot Stack::GetCommittedStackLimit() {
+#if defined(V8_TARGET_ARCH_X64)
+  return reinterpret_cast<void*>(
+      reinterpret_cast<NT_TIB64*>(NtCurrentTeb())->StackLimit);
+#elif defined(V8_TARGET_ARCH_32_BIT)
+  return reinterpret_cast<void*>(
+      reinterpret_cast<NT_TIB*>(NtCurrentTeb())->StackLimit);
+#elif defined(V8_TARGET_ARCH_ARM64)
+  ULONG_PTR lowLimit, highLimit;
+  ::GetCurrentThreadStackLimits(&lowLimit, &highLimit);
+  return reinterpret_cast<void*>(lowLimit);
+#else
+#error Unsupported GetCommittedStackLimit.
+#endif
+}
+
+// static
+Stack::StackSlot Stack::ObtainCurrentThreadStackReservedLimit() {
+  // On Windows, "StackLimit" (see function above) is the limit of the stack
+  // pages committed so far and grows dynamically. The absolute limit of the
+  // reserved stack memory is called "DeallocationStack". It does not have an
+  // associated symbol in the struct, and its offset is not very well
+  // documented, but it has been stable for a long time.
+  // Sources for the offsets:
+  // https://en.wikipedia.org/wiki/Win32_Thread_Information_Block
+  // https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/pebteb/teb/index.htm
+#ifdef V8_TARGET_ARCH_64_BIT
+  constexpr unsigned kDeallocationStackOffset = 0x1478;
+#else
+  constexpr unsigned kDeallocationStackOffset = 0xe0c;
+#endif
+  return *reinterpret_cast<void**>(reinterpret_cast<char*>(NtCurrentTeb()) +
+                                   kDeallocationStackOffset);
+}
+
+// static
+void Stack::SetCurrentThreadStackBounds(uintptr_t limit, uintptr_t base) {
+#if defined(V8_TARGET_ARCH_X64) || defined(V8_TARGET_ARCH_ARM64)
+  reinterpret_cast<NT_TIB64*>(NtCurrentTeb())->StackBase = base;
+  reinterpret_cast<NT_TIB64*>(NtCurrentTeb())->StackLimit = limit;
+#elif defined(V8_TARGET_ARCH_32_BIT)
+  reinterpret_cast<NT_TIB*>(NtCurrentTeb())->StackBase =
+      reinterpret_cast<void*>(base);
+  reinterpret_cast<NT_TIB*>(NtCurrentTeb())->StackLimit =
+      reinterpret_cast<void*>(limit);
+#else
+#error Unsupported SetCurrentThreadStackBounds.
 #endif
 }
 

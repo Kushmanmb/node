@@ -195,7 +195,7 @@ class StraightForwardRegisterAllocator {
                        const compiler::AllocatedOperand& location);
 
   void AllocateControlNode(ControlNode* node, BasicBlock* block);
-  void AllocateNode(Node* node);
+  void AllocateNode(NodeBase* node);
   void AllocateNodeResult(ValueNode* node);
   void AllocateEagerDeopt(const EagerDeoptInfo& deopt_info);
   void AllocateLazyDeopt(const LazyDeoptInfo& deopt_info);
@@ -326,7 +326,7 @@ class StraightForwardRegisterAllocator {
   };
   ZoneVector<BlockPatch> patches_;
 
-  BlockConstIterator block_it_;
+  int current_block_id_;
   NodeIterator node_it_;
   // The current node, whether a Node in the body or the ControlNode.
   NodeBase* current_node_;

@@ -16,16 +16,29 @@ namespace v8::internal {
 
 class V8_EXPORT_PRIVATE FlagHelpers {
  public:
-  static char NormalizeChar(char ch);
+  static constexpr char NormalizeChar(char ch) { return ch == '_' ? '-' : ch; }
 
-  static int FlagNamesCmp(const char* a, const char* b);
+  static constexpr int FlagNamesCmp(const char* a, const char* b) {
+    int i = 0;
+    char ac, bc;
+    do {
+      ac = NormalizeChar(a[i]);
+      bc = NormalizeChar(b[i]);
+      if (ac < bc) return -1;
+      if (ac > bc) return 1;
+      i++;
+    } while (ac != '\0');
+    return 0;
+  }
 
-  static bool EqualNames(const char* a, const char* b);
+  static constexpr bool EqualNames(const char* a, const char* b) {
+    return FlagNamesCmp(a, b) == 0;
+  }
+
   static bool EqualNameWithSuffix(const char* a, const char* b);
 };
 
 struct Flag;
-Flag* FindFlagByPointer(const void* ptr);
 V8_EXPORT_PRIVATE Flag* FindFlagByName(const char* name);
 V8_EXPORT_PRIVATE Flag* FindImplicationFlagByName(const char* name);
 
@@ -70,10 +83,8 @@ struct Flag {
   }
 
   FlagType type_;       // What type of flag, bool, int, or string.
-  const char* name_;    // Name of the flag, ex "my_flag".
   void* valptr_;        // Pointer to the global flag variable.
   const void* defptr_;  // Pointer to the default value.
-  const char* cmt_;     // A comment about the flags purpose.
   bool owns_ptr_;       // Does the flag own its string value?
   SetBy set_by_ = SetBy::kDefault;
   // Name of the flag implying this flag, if any.
@@ -85,9 +96,9 @@ struct Flag {
 
   FlagType type() const { return type_; }
 
-  const char* name() const { return name_; }
+  V8_EXPORT_PRIVATE const char* name() const;
 
-  const char* comment() const { return cmt_; }
+  V8_EXPORT_PRIVATE const char* comment() const;
 
   bool PointsTo(const void* ptr) const { return valptr_ == ptr; }
 

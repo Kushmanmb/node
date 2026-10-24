@@ -6,10 +6,10 @@ const { makeEntry } = require('./formdata')
 const { webidl } = require('../webidl')
 const assert = require('node:assert')
 const { isomorphicDecode } = require('../infra')
-const { utf8DecodeBytes } = require('../../encoding')
 
 const dd = Buffer.from('--')
 const decoder = new TextDecoder()
+const decoderIgnoreBOM = new TextDecoder('utf-8', { ignoreBOM: true })
 
 /**
  * @param {string} chars
@@ -188,7 +188,7 @@ function multipartFormDataParser (input, mimeType) {
       // 5.11. Otherwise:
 
       // 5.11.1. Let value be the UTF-8 decoding without BOM of body.
-      value = utf8DecodeBytes(Buffer.from(body))
+      value = decoderIgnoreBOM.decode(Buffer.from(body))
     }
 
     // 5.12. Assert: name is a scalar value string and value is either a scalar value string or a File object.
@@ -204,7 +204,7 @@ function multipartFormDataParser (input, mimeType) {
  * Parses content-disposition attributes (e.g., name="value" or filename*=utf-8''encoded)
  * @param {Buffer} input
  * @param {{ position: number }} position
- * @returns {{ name: string, value: string }}
+ * @returns {{ name: string, value: string, extended: boolean } | null}
  */
 function parseContentDispositionAttribute (input, position) {
   // Skip leading semicolon and whitespace
@@ -261,19 +261,27 @@ function parseContentDispositionAttribute (input, position) {
       position
     )
 
-    // Check for utf-8'' prefix (case insensitive)
+    const charsetSeparator = headerValue.indexOf(0x27)
+    const languageSeparator = charsetSeparator === -1
+      ? -1
+      : headerValue.indexOf(0x27, charsetSeparator + 1)
+
+    if (charsetSeparator === -1 || languageSeparator === -1) {
+      throw parsingError('expected charset and language separators in extended value')
+    }
+
     if (
+      charsetSeparator !== 5 ||
       (headerValue[0] !== 0x75 && headerValue[0] !== 0x55) || // u or U
       (headerValue[1] !== 0x74 && headerValue[1] !== 0x54) || // t or T
       (headerValue[2] !== 0x66 && headerValue[2] !== 0x46) || // f or F
       headerValue[3] !== 0x2d || // -
       headerValue[4] !== 0x38 // 8
     ) {
-      throw parsingError('unknown encoding, expected utf-8\'\'')
+      throw parsingError('unknown charset, expected utf-8')
     }
 
-    // Skip utf-8'' and decode the rest
-    value = decodeURIComponent(decoder.decode(headerValue.subarray(7)))
+    value = decodeURIComponent(decoder.decode(headerValue.subarray(languageSeparator + 1)))
   } else if (input[position.position] === 0x22 /* " */) {
     // Quoted string
     position.position++ // skip opening quote
@@ -304,7 +312,7 @@ function parseContentDispositionAttribute (input, position) {
     value = decoder.decode(tokenValue)
   }
 
-  return { name: attrNameStr, value }
+  return { name: attrNameStr, value, extended: isExtended }
 }
 
 /**
@@ -368,6 +376,9 @@ function parseMultipartFormDataHeaders (input, position) {
     switch (bufferToLowerCasedHeaderName(headerName)) {
       case 'content-disposition': {
         name = filename = null
+        // Track whether filename was set from the extended (RFC 5987) form so
+        // a subsequent legacy `filename` attribute does not override it.
+        let filenameIsExtended = false
 
         // Collect the disposition type (should be "form-data")
         const dispositionType = collectASequenceOfBytes(
@@ -383,8 +394,8 @@ function parseMultipartFormDataHeaders (input, position) {
         // Parse attributes recursively until CRLF
         while (
           position.position < input.length &&
-          input[position.position] !== 0x0d &&
-          input[position.position + 1] !== 0x0a
+          (input[position.position] !== 0x0d ||
+          input[position.position + 1] !== 0x0a)
         ) {
           const attribute = parseContentDispositionAttribute(input, position)
 
@@ -395,7 +406,15 @@ function parseMultipartFormDataHeaders (input, position) {
           if (attribute.name === 'name') {
             name = attribute.value
           } else if (attribute.name === 'filename') {
-            filename = attribute.value
+            // Per RFC 5987 §4.1, when both legacy and extended forms of the
+            // same parameter are present, the extended (filename*) form takes
+            // precedence regardless of the order they appear in.
+            if (attribute.extended) {
+              filename = attribute.value
+              filenameIsExtended = true
+            } else if (!filenameIsExtended) {
+              filename = attribute.value
+            }
           }
         }
 
@@ -448,7 +467,7 @@ function parseMultipartFormDataHeaders (input, position) {
 
     // 2.9. If position does not point to a sequence of bytes starting with 0x0D 0x0A
     //      (CR LF), return failure. Otherwise, advance position by 2 (past the newline).
-    if (input[position.position] !== 0x0d && input[position.position + 1] !== 0x0a) {
+    if (input[position.position] !== 0x0d || input[position.position + 1] !== 0x0a) {
       throw parsingError('expected CRLF')
     } else {
       position.position += 2

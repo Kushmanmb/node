@@ -4,6 +4,10 @@
 //
 // Flags: --allow-natives-syntax --maglev
 // Flags: --typed-array-length-loading
+// Flags: --mock-arraybuffer-allocator
+
+// Using --mock-arraybuffer-allocator makes the big array buffer allocation
+// always succeed. This test doesn't access the memory, so it's fine.
 
 function foo(size) {
   let a = new Uint8Array(size);
@@ -19,9 +23,9 @@ if (%Is64Bit()) {
   %OptimizeMaglevOnNextCall(foo);
   const v1 = foo(100);
   assertTrue(v1);
-  assertTrue(isMaglevved(foo));
+  assertMaglevved(foo);
 
   const v2 = foo(largeLength);
   assertTrue(v2);
-  assertTrue(isMaglevved(foo));
+  assertMaglevved(foo);
 }

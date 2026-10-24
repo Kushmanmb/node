@@ -8,7 +8,7 @@
 #include "src/codegen/x64/assembler-x64.h"
 // Include the non-inl header before the rest of the headers.
 
-#include "src/base/cpu.h"
+#include "src/base/cpu/cpu.h"
 #include "src/base/memory.h"
 #include "src/codegen/flush-instruction-cache.h"
 #include "src/debug/debug.h"
@@ -124,6 +124,112 @@ void Assembler::emit_optional_rex_8(Register reg, Operand op) {
   }
 }
 
+void Assembler::emit_rex2_prefix(Register reg, Register rm_reg, Rex2MapID m,
+                                 Rex2W w) {
+  emit(0xD5);
+  emit(m | reg.bit4() << 6 | rm_reg.bit4() << 4 | w | reg.high_bit() << 2 |
+       rm_reg.high_bit());
+}
+
+void Assembler::emit_rex2_prefix(Register reg, Operand op, Rex2MapID m,
+                                 Rex2W w) {
+  emit(0xD5);
+  emit(m | reg.bit4() << 6 | op.rex2() << 4 | w | reg.high_bit() << 2 |
+       op.rex());
+}
+
+void Assembler::emit_rex2_64(Register reg, Register rm_reg, Rex2MapID m) {
+  emit_rex2_prefix(reg, rm_reg, m, kRex2W1);
+}
+
+void Assembler::emit_rex2_64(Register reg, Operand op, Rex2MapID m) {
+  emit_rex2_prefix(reg, op, m, kRex2W1);
+}
+
+void Assembler::emit_rex2_64(Register reg, Rex2MapID m) {
+  emit_rex2_prefix(rax, reg, m, kRex2W1);
+}
+
+void Assembler::emit_rex2_64(Operand op, Rex2MapID m) {
+  emit_rex2_prefix(rax, op, m, kRex2W1);
+}
+
+void Assembler::emit_rex2_32(Register reg, Register rm_reg, Rex2MapID m) {
+  emit_rex2_prefix(reg, rm_reg, m, kRex2W0);
+}
+
+void Assembler::emit_rex2_32(Register reg, Operand op, Rex2MapID m) {
+  emit_rex2_prefix(reg, op, m, kRex2W0);
+}
+
+void Assembler::emit_rex2_32(Register reg, Rex2MapID m) {
+  emit_rex2_prefix(rax, reg, m, kRex2W0);
+}
+
+void Assembler::emit_rex2_32(Operand op, Rex2MapID m) {
+  emit_rex2_prefix(rax, op, m, kRex2W0);
+}
+
+// Legacy extended evex
+void Assembler::emit_legacy_extended_evex_prefix(Register dst, Register src1,
+                                                 Register src2, SIMDPrefix pp,
+                                                 VexW w,
+                                                 EvexStatusFlagUpdate nf,
+                                                 EvexNewDataDestination nd) {
+  emit_evex_byte0();
+  emit_legacy_extended_evex_byte1(src1, src2);
+  emit_legacy_extended_evex_byte2(dst, w, pp);
+  emit_legacy_extended_evex_byte3(dst, nd, nf);
+}
+
+void Assembler::emit_legacy_extended_evex_prefix(Register dst, Register src1,
+                                                 Operand src2, SIMDPrefix pp,
+                                                 VexW w,
+                                                 EvexStatusFlagUpdate nf,
+                                                 EvexNewDataDestination nd) {
+  emit_evex_byte0();
+  emit_legacy_extended_evex_byte1(src1, src2);
+  emit_legacy_extended_evex_byte2(dst, src2, w, pp);
+  emit_legacy_extended_evex_byte3(dst, nd, nf);
+}
+
+void Assembler::emit_legacy_extended_evex_byte1(Register src1, Register src2) {
+  uint8_t mm = 4;
+  uint8_t rxb =
+      static_cast<uint8_t>(~((src1.high_bit() << 2) | src2.high_bit())) << 5;
+  uint8_t r4 = static_cast<uint8_t>((~src1.bit4()) & 0x1);
+  uint8_t b4 = static_cast<uint8_t>(src2.bit4() & 0x1);
+  emit(rxb | (r4 << 4) | (b4 << 3) | mm);
+}
+
+void Assembler::emit_legacy_extended_evex_byte1(Register src1, Operand src2) {
+  uint8_t mm = 4;
+  uint8_t r3 = static_cast<uint8_t>((~src1.high_bit()) & 0x1);
+  uint8_t x3b3 = (~src2.rex()) & 0x3;
+  uint8_t r4 = static_cast<uint8_t>((~src1.bit4()) & 0x1);
+  uint8_t b4 = src2.rex2() & 0x1;
+  emit((r3 << 7) | (x3b3 << 5) | (r4 << 4) | (b4 << 3) | mm);
+}
+
+void Assembler::emit_legacy_extended_evex_byte2(Register dst, VexW w,
+                                                SIMDPrefix pp) {
+  uint8_t x4 = 1;
+  emit(w | ((~dst.code() & 0xf) << 3) | (x4 << 2) | pp);
+}
+
+void Assembler::emit_legacy_extended_evex_byte2(Register dst, Operand src2,
+                                                VexW w, SIMDPrefix pp) {
+  uint8_t x4 = (~src2.rex2() & 0x2) >> 1;
+  emit(w | ((~dst.code() & 0xf) << 3) | (x4 << 2) | pp);
+}
+
+void Assembler::emit_legacy_extended_evex_byte3(Register dst,
+                                                EvexNewDataDestination nd,
+                                                EvexStatusFlagUpdate nf) {
+  uint8_t v4 = (dst.code() < 16) ? 0x8 : 0;
+  emit(nd | v4 | nf);
+}
+
 // byte 1 of 3-byte VEX
 void Assembler::emit_vex3_byte1(XMMRegister reg, XMMRegister rm,
                                 LeadingOpcode m) {
@@ -141,6 +247,8 @@ void Assembler::emit_vex3_byte1(XMMRegister reg, Operand rm, LeadingOpcode m) {
 // byte 1 of 2-byte VEX
 void Assembler::emit_vex2_byte1(XMMRegister reg, XMMRegister v, VectorLength l,
                                 SIMDPrefix pp) {
+  // The 2-byte VEX prefix encodes can only address xmm0-15.
+  DCHECK_EQ(v.code() & 0xf, v.code());
   uint8_t rv = static_cast<uint8_t>(~((reg.high_bit() << 4) | v.code())) << 3;
   emit(rv | l | pp);
 }
@@ -192,6 +300,74 @@ void Assembler::emit_vex_prefix(Register reg, Register vreg, Operand rm,
   XMMRegister ireg = XMMRegister::from_code(reg.code());
   XMMRegister ivreg = XMMRegister::from_code(vreg.code());
   emit_vex_prefix(ireg, ivreg, rm, l, pp, mm, w);
+}
+
+// Vector-form EVEX prefix, shared by AVX10.1 and APX.
+void Assembler::emit_evex_byte1(XMMRegister reg, XMMRegister rm,
+                                LeadingOpcode m) {
+  uint8_t rxb = static_cast<uint8_t>(
+                    ~((reg.high_bit() << 2) | (rm.bit4() << 1) | rm.high_bit()))
+                << 5;
+  uint8_t r1 = reg.bit4() ? 0 : 0x10;
+  emit(rxb | r1 | m);
+}
+
+void Assembler::emit_evex_byte1(XMMRegister reg, Operand rm, LeadingOpcode m) {
+  // Same base/index EGPR routing as the APX legacy-extended EVEX prefix; the
+  // only vector-specific field here is the 3-bit map id (m).
+  uint8_t r3 = (~reg.high_bit()) & 0x1;
+  uint8_t x3b3 = (~rm.rex()) & 0x3;
+  uint8_t r4 = (~reg.bit4()) & 0x1;
+#ifdef V8_ENABLE_APX_F
+  // EVEX.B4: fifth bit of the r/m base register for EGPR (r16-31) addressing.
+  uint8_t b4 = rm.rex2() & 0x1;
+#else
+  uint8_t b4 = 0;
+#endif
+  emit((r3 << 7) | (x3b3 << 5) | (r4 << 4) | (b4 << 3) | m);
+}
+
+void Assembler::emit_evex_byte2(VexW w, XMMRegister v, SIMDPrefix pp) {
+  // Register-direct r/m (ModRM.Mod == 3): EVEX.U must be 1.
+  emit(w | ((~v.code() & 0xf) << 3) | 0x4 | pp);
+}
+
+void Assembler::emit_evex_byte2(VexW w, XMMRegister v, Operand rm,
+                                SIMDPrefix pp) {
+#ifdef V8_ENABLE_APX_F
+  // EVEX.U carries ~X4: fifth bit of the index register for EGPR addressing.
+  uint8_t u = (~rm.rex2() & 0x2) >> 1;
+#else
+  uint8_t u = 1;
+#endif
+  emit(w | ((~v.code() & 0xf) << 3) | (u << 2) | pp);
+}
+
+// TODO(fanchen): support b(broadcast).
+void Assembler::emit_evex_byte3(VectorLength l, XMMRegister v, OpMask aaa,
+                                MaskingType z) {
+  uint8_t v1 = v.bit4() ? 0 : 0x8;
+  emit(z | (l << 3) | v1 | aaa);
+}
+
+void Assembler::emit_evex_prefix(XMMRegister reg, XMMRegister vreg,
+                                 XMMRegister rm, VectorLength l, SIMDPrefix pp,
+                                 LeadingOpcode mm, VexW w, OpMask aaa,
+                                 MaskingType z) {
+  emit_evex_byte0();
+  emit_evex_byte1(reg, rm, mm);
+  emit_evex_byte2(w, vreg, pp);
+  emit_evex_byte3(l, vreg, aaa, z);
+}
+
+void Assembler::emit_evex_prefix(XMMRegister reg, XMMRegister vreg, Operand rm,
+                                 VectorLength l, SIMDPrefix pp,
+                                 LeadingOpcode mm, VexW w, OpMask aaa,
+                                 MaskingType z) {
+  emit_evex_byte0();
+  emit_evex_byte1(reg, rm, mm);
+  emit_evex_byte2(w, vreg, rm, pp);
+  emit_evex_byte3(l, vreg, aaa, z);
 }
 
 Address Assembler::target_address_at(Address pc, Address constant_pool) {
@@ -302,7 +478,7 @@ int RelocInfo::target_address_size() {
   }
 }
 
-Tagged<HeapObject> RelocInfo::target_object(PtrComprCageBase cage_base) {
+Tagged<HeapObject> RelocInfo::target_object() {
   DCHECK(IsCodeTarget(rmode_) || IsEmbeddedObjectMode(rmode_));
   if (IsCompressedEmbeddedObject(rmode_)) {
     Tagged_t compressed = ReadUnalignedValue<Tagged_t>(pc_);
@@ -339,6 +515,16 @@ void WritableRelocInfo::set_target_external_reference(
   if (icache_flush_mode != SKIP_ICACHE_FLUSH) {
     FlushInstructionCache(pc_, sizeof(Address));
   }
+}
+
+Address RelocInfo::wasm_code_pointer() const {
+  DCHECK(rmode_ == RelocInfo::WASM_CODE_POINTER);
+  return ReadUnalignedValue<Address>(pc_);
+}
+
+void WritableRelocInfo::set_wasm_code_pointer(Address target) {
+  DCHECK(rmode_ == RelocInfo::WASM_CODE_POINTER);
+  jit_allocation_.WriteUnalignedValue(pc_, target);
 }
 
 WasmCodePointer RelocInfo::wasm_code_pointer_table_entry() const {

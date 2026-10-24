@@ -1,6 +1,6 @@
 const t = require('tap')
-const { resolve, dirname, join } = require('node:path')
-const fs = require('node:fs')
+const { resolve, join } = require('node:path')
+const fs = require('node:fs/promises')
 const { time } = require('proc-log')
 const { load: loadMockNpm } = require('../fixtures/mock-npm.js')
 const mockGlobals = require('@npmcli/mock-globals')
@@ -33,6 +33,26 @@ t.test('npm.load', async t => {
       () => npm.load(),
       /load error/
     )
+  })
+
+  await t.test('rejects extension-file from a disallowed config source', async t => {
+    const { npm } = await loadMockNpm(t, { load: false })
+    // a disallowed (env) source; mockGlobals restores process.env on teardown
+    mockGlobals(t, { 'process.env.npm_config_extension_file': 'tools/ext.mjs' })
+    await t.rejects(
+      () => npm.load(),
+      { code: 'ENPMEXTENSIONCONFIG' },
+      'env config source is rejected with a surfaced error'
+    )
+  })
+
+  await t.test('accepts extension-file from project config', async t => {
+    // config.load() exports npm_config_* to the real env, so clean it up to avoid leaking into raw-env tests
+    t.teardown(() => delete process.env.npm_config_extension_file)
+    const { npm } = await loadMockNpm(t, {
+      prefixDir: { '.npmrc': 'extension-file=tools/ext.mjs' },
+    })
+    t.equal(npm.config.find('extension-file'), 'project', 'loaded from project config without error')
   })
 
   await t.test('basic loading', async t => {
@@ -86,73 +106,6 @@ t.test('npm.load', async t => {
     t.match(logs.warn, [
       'using --force Recommended protections disabled.',
     ])
-  })
-
-  await t.test('node is a symlink', async t => {
-    const node = process.platform === 'win32' ? 'node.exe' : 'node'
-    const { Npm, npm, logs, outputs, prefix } = await loadMockNpm(t, {
-      prefixDir: {
-        bin: t.fixture('symlink', dirname(process.execPath)),
-      },
-      config: {
-        timing: true,
-        usage: '',
-        scope: 'foo',
-      },
-      argv: [
-        'token',
-        'revoke',
-        'blergggg',
-      ],
-      globals: (dirs) => ({
-        'process.env.PATH': resolve(dirs.prefix, 'bin'),
-        'process.argv': [
-          node,
-          process.argv[1],
-        ],
-      }),
-    })
-
-    t.equal(npm.config.get('scope'), '@foo', 'added the @ sign to scope')
-
-    t.match([
-      ...logs.timing.filter((p) => p.startsWith('npm:load:whichnode')),
-      ...logs.verbose,
-      ...logs.timing.filter((p) => p.startsWith('npm:load')),
-    ], [
-      /npm:load:whichnode Completed in [0-9.]+ms/,
-      `node symlink ${resolve(prefix, 'bin', node)}`,
-      /title npm token revoke blergggg/,
-      /argv "token" "revoke" "blergggg".*"--usage" "--scope" "foo"/,
-      /logfile logs-max:\d+ dir:.*/,
-      /logfile .*-debug-0.log/,
-      /npm:load:.* Completed in [0-9.]+ms/,
-    ])
-    t.equal(process.execPath, resolve(prefix, 'bin', node))
-
-    outputs.length = 0
-    logs.length = 0
-    await npm.exec('ll', [])
-
-    t.equal(npm.command, 'll', 'command set to first npm command')
-    t.equal(npm.flatOptions.npmCommand, 'll', 'npmCommand flatOption set')
-
-    const ll = Npm.cmd('ll')
-    t.same(outputs, [ll.describeUsage], 'print usage')
-    npm.config.set('usage', false)
-
-    outputs.length = 0
-    logs.length = 0
-    await npm.exec('get', ['scope', 'usage'])
-
-    t.strictSame([npm.command, npm.flatOptions.npmCommand], ['ll', 'll'],
-      'does not change npm.command when another command is called')
-
-    t.match(logs, [
-      /timing config:load:flatten Completed in [0-9.]+ms/,
-      /timing command:config Completed in [0-9.]+ms/,
-    ])
-    t.same(outputs, ['scope=@foo\nusage=false'])
   })
 
   await t.test('--no-workspaces with --workspace', async t => {
@@ -327,11 +280,11 @@ t.test('debug log', async t => {
     const logsDir = join(testdir, 'my_logs_dir')
 
     // make logs dir a file before load so it files
-    fs.writeFileSync(logsDir, 'A_TEXT_FILE')
+    await fs.writeFile(logsDir, 'A_TEXT_FILE')
     await t.resolves(npm.load(), 'loads with invalid logs dir')
 
     t.equal(npm.logFiles.length, 0, 'no log files array')
-    t.strictSame(fs.readFileSync(logsDir, 'utf-8'), 'A_TEXT_FILE')
+    t.strictSame(await fs.readFile(logsDir, 'utf-8'), 'A_TEXT_FILE')
   })
 })
 
@@ -339,7 +292,7 @@ t.test('cache dir', async t => {
   t.test('creates a cache dir', async t => {
     const { npm } = await loadMockNpm(t)
 
-    t.ok(fs.existsSync(npm.cache), 'cache dir exists')
+    await t.resolves(fs.access(npm.cache), 'cache dir exists')
   })
 
   t.test('can load with a bad cache dir', async t => {
@@ -352,7 +305,7 @@ t.test('cache dir', async t => {
 
     await t.resolves(npm.load(), 'loads with cache dir as a file')
 
-    t.equal(fs.readFileSync(cache, 'utf-8'), 'A_TEXT_FILE')
+    t.equal(await fs.readFile(cache, 'utf-8'), 'A_TEXT_FILE')
   })
 })
 
@@ -497,6 +450,233 @@ t.test('implicit workspace accept', async t => {
   await t.rejects(mock.npm.exec('org', []), /.*Usage/)
 })
 
+t.test('subcommand handling', async t => {
+  t.test('no subcommand provided', async t => {
+    const { npm } = await loadMockNpm(t)
+    await t.rejects(
+      npm.exec('trust', []),
+      /Usage/,
+      'throws usage error when no subcommand provided'
+    )
+  })
+
+  t.test('unknown subcommand', async t => {
+    const { npm } = await loadMockNpm(t)
+    await t.rejects(
+      npm.exec('trust', ['unknown-subcommand']),
+      /Unknown subcommand: unknown-subcommand/,
+      'throws error for unknown subcommand'
+    )
+  })
+
+  t.test('subcommand help with --usage', async t => {
+    const { npm, outputs } = await loadMockNpm(t, {
+      config: {
+        usage: true,
+      },
+    })
+    await npm.exec('trust', ['github'])
+    t.ok(outputs.length > 0, 'outputs help text')
+    // Check if output was generated - the format may be different
+    t.ok(outputs.some(o => o && o[0]), 'has output content')
+  })
+})
+
+t.test('exec edge cases', async t => {
+  t.test('command calls exec again - covers else branch at line 207', async t => {
+    const { npm, outputs } = await loadMockNpm(t)
+    // 'get' command calls npm.exec('config', ['get', ...]) internally
+    // The first exec() sets #command, then when it re-enters exec(),
+    // the else branch (line 217) is taken because #command is already set
+    await npm.exec('get', ['registry'])
+    t.ok(outputs.length > 0, 'command executed and produced output')
+  })
+
+  t.test('exec without args parameter - covers default args branch', async t => {
+    const Npm = require('../../lib/npm.js')
+    const npm = new Npm()
+    await npm.load()
+    npm.argv = ['test']
+    // Call exec without second parameter - should use default args = this.argv
+    await npm.exec('run')
+    t.pass('exec called without second argument')
+  })
+
+  t.test('--versions flag sets argv to version', async t => {
+    const { npm } = await loadMockNpm(t, {
+      config: { versions: true },
+    })
+    t.equal(npm.argv.length, 0, 'argv is empty after version command runs')
+    t.equal(npm.config.get('usage'), false, 'usage is set to false')
+  })
+
+  t.test('color true sets COLOR env to 1', async t => {
+    await loadMockNpm(t, {
+      config: { color: 'always' },
+    })
+    t.equal(process.env.COLOR, '1', 'COLOR env is set to 1 when color is truthy')
+  })
+
+  t.test('command without subcommands', async t => {
+    const { npm } = await loadMockNpm(t)
+    // Test a command that doesn't have subcommands (line 249 branch)
+    await t.rejects(npm.exec('org', []), /Usage/)
+  })
+
+  t.test('command with workspaces support', async t => {
+    const { npm } = await loadMockNpm(t, {
+      prefixDir: {
+        packages: {
+          a: {
+            'package.json': JSON.stringify({
+              name: 'a',
+              version: '1.0.0',
+              scripts: { test: 'echo test' },
+            }),
+          },
+        },
+        'package.json': JSON.stringify({
+          name: 'root',
+          version: '1.0.0',
+          workspaces: ['./packages/a'],
+        }),
+      },
+      config: {
+        workspace: ['./packages/a'],
+      },
+    })
+    // Test a command that supports workspaces to trigger execWorkspaces path (line 321)
+    await npm.exec('run', ['test'])
+    t.pass('executes with workspaces')
+  })
+
+  t.test('execCommandClass with default commandPath', async t => {
+    const { npm } = await loadMockNpm(t)
+    // Create a simple command instance
+    const Command = npm.constructor.cmd('version')
+    const commandInstance = new Command(npm)
+
+    // Call execCommandClass without providing commandPath (using default [])
+    await npm.execCommandClass(commandInstance, [])
+
+    t.pass('execCommandClass works with default commandPath parameter')
+  })
+
+  t.test('command with definitions executes exec() without workspaces', async t => {
+    const BaseCommand = require('../../lib/base-cmd.js')
+    const Definition = require('@npmcli/config/lib/definitions/definition.js')
+
+    let execCalled = false
+    let execArgs = null
+    let execFlags = null
+
+    const { npm } = await loadMockNpm(t, {
+      prefixDir: {
+        'package.json': JSON.stringify({
+          name: 'test-pkg',
+          version: '1.0.0',
+        }),
+      },
+    })
+
+    class TestCommand extends BaseCommand {
+      static name = 'test-cmd'
+      static description = 'Test command with definitions'
+      static workspaces = true
+      static definitions = [
+        new Definition('testflag', {
+          type: String,
+          default: 'default-value',
+          description: 'A test flag',
+        }),
+      ]
+
+      async exec (args, flags) {
+        execCalled = true
+        execArgs = args
+        execFlags = flags
+      }
+
+      async execWorkspaces () {
+        throw new Error('execWorkspaces should not be called')
+      }
+    }
+
+    const command = new TestCommand(npm)
+    // Set config.argv so flags() can parse the positional args
+    npm.config.argv = [process.argv[0], process.argv[1], 'test-cmd', 'arg1', 'arg2']
+    await npm.execCommandClass(command, ['arg1', 'arg2'], ['test-cmd'])
+
+    t.equal(execCalled, true, 'exec() was called')
+    t.same(execArgs, ['arg1', 'arg2'], 'positional args passed correctly')
+    t.ok(execFlags, 'flags object passed')
+    t.equal(execFlags.testflag, 'default-value', 'flag has default value')
+  })
+
+  t.test('command with definitions executes execWorkspaces() with workspaces', async t => {
+    const BaseCommand = require('../../lib/base-cmd.js')
+    const Definition = require('@npmcli/config/lib/definitions/definition.js')
+
+    let execWorkspacesCalled = false
+    let execArgs = null
+    let execFlags = null
+
+    const { npm } = await loadMockNpm(t, {
+      prefixDir: {
+        packages: {
+          a: {
+            'package.json': JSON.stringify({
+              name: 'workspace-a',
+              version: '1.0.0',
+            }),
+          },
+        },
+        'package.json': JSON.stringify({
+          name: 'root',
+          version: '1.0.0',
+          workspaces: ['./packages/a'],
+        }),
+      },
+      config: {
+        workspace: ['./packages/a'],
+      },
+    })
+
+    class TestCommand extends BaseCommand {
+      static name = 'test-cmd'
+      static description = 'Test command with definitions'
+      static workspaces = true
+      static definitions = [
+        new Definition('testflag', {
+          type: String,
+          default: 'ws-default',
+          description: 'A test flag',
+        }),
+      ]
+
+      async exec () {
+        throw new Error('exec should not be called')
+      }
+
+      async execWorkspaces (args, flags) {
+        execWorkspacesCalled = true
+        execArgs = args
+        execFlags = flags
+      }
+    }
+
+    const command = new TestCommand(npm)
+    // Set config.argv so flags() can parse the positional args
+    npm.config.argv = [process.argv[0], process.argv[1], 'test-cmd', 'wsarg1']
+    await npm.execCommandClass(command, ['wsarg1'], ['test-cmd'])
+
+    t.equal(execWorkspacesCalled, true, 'execWorkspaces() was called')
+    t.same(execArgs, ['wsarg1'], 'positional args passed correctly')
+    t.ok(execFlags, 'flags object passed')
+    t.equal(execFlags.testflag, 'ws-default', 'flag has default value')
+  })
+})
+
 t.test('usage', async t => {
   t.test('with browser', async t => {
     const { npm } = await loadMockNpm(t, { globals: { process: { platform: 'posix' } } })
@@ -558,12 +738,4 @@ t.test('usage', async t => {
       })
     }
   })
-})
-
-t.test('print usage if non-command param provided', async t => {
-  const { npm, joinedOutput } = await loadMockNpm(t)
-
-  await t.rejects(npm.exec('tset'), { command: 'tset', exitCode: 1 })
-  t.match(joinedOutput(), 'Unknown command: "tset"')
-  t.match(joinedOutput(), 'Did you mean this?')
 })

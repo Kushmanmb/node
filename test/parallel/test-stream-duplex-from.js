@@ -401,3 +401,36 @@ function makeATestWritableStream(writeFunc) {
     assert.strictEqual(d.writable, false);
   }));
 }
+
+// When the readable side errors, the error must propagate to the writable side.
+{
+  const expectedErr = new Error('readable error');
+  const r = new Readable({ read() {} });
+  const w = new Writable({
+    write(chunk, encoding, callback) { callback(); },
+  });
+  const d = Duplex.from({ readable: r, writable: w });
+  d.on('error', common.mustCall((err) => {
+    assert.strictEqual(err, expectedErr);
+  }));
+  w.on('error', common.mustCall((err) => {
+    assert.strictEqual(err, expectedErr);
+  }));
+  r.destroy(expectedErr);
+}
+
+// Regression for https://github.com/nodejs/node/issues/55077:
+// An AsyncFunction passed to Duplex.from() that returns without consuming its
+// input must still allow pipeline() to complete and destroy the upstream.
+{
+  const r = Readable.from(['foo', 'bar', 'baz']);
+  pipeline(
+    r,
+    Duplex.from(async function() {
+      // Intentionally do not consume the async iterable input.
+    }),
+    common.mustCall(() => {
+      assert.strictEqual(r.destroyed, true);
+    }),
+  );
+}

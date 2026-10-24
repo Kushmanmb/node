@@ -84,11 +84,28 @@
     }, { # POSIX
       'defines': [ '__POSIX__' ],
     }],
+    [ 'OS=="aix" or OS=="os400"', {
+      'cflags': [ '-mcpu=power9' ],
+    }],
+    [ 'OS=="linux" and target_arch=="ppc64"', {
+      'cflags': [ '-mcpu=power9' ],
+    }],
+    [ 'OS=="linux" and target_arch=="s390x"', {
+      'cflags': [ '-march=z14' ],
+    }],
+    [ 'v8_use_perfetto==1 and node_shared_perfetto=="false"', {
+      'dependencies': [
+        'deps/perfetto/perfetto.gyp:perfetto_sdk',
+      ],
+    }],
     [ 'node_enable_d8=="true"', {
       'dependencies': [ 'tools/v8_gypfiles/d8.gyp:d8' ],
     }],
     [ 'node_enable_v8windbg=="true"', {
       'dependencies': [ 'tools/v8_gypfiles/v8windbg.gyp:build_v8windbg' ],
+    }],
+    [ 'node_enable_v8debughelper=="true"', {
+      'dependencies': [ 'tools/v8_gypfiles/v8_debug_helper.gyp:build_v8_debug_helper' ],
     }],
     [ 'node_use_bundled_v8=="true"', {
       'dependencies': [
@@ -234,8 +251,8 @@
         'dependencies': [ 'deps/simdjson/simdjson.gyp:simdjson' ],
     }],
 
-    [ 'node_shared_simdutf=="false"', {
-        'dependencies': [ 'tools/v8_gypfiles/v8.gyp:simdutf' ],
+    [ 'node_shared_simdutf=="false" and node_use_bundled_v8!="false"', {
+        'dependencies': [ 'tools/v8_gypfiles/simdutf.gyp:simdutf' ],
     }],
 
     [ 'node_shared_brotli=="false"', {
@@ -244,6 +261,10 @@
 
     [ 'node_use_sqlite=="true" and node_shared_sqlite=="false"', {
       'dependencies': [ 'deps/sqlite/sqlite.gyp:sqlite' ],
+    }],
+
+    [ 'node_use_ffi=="true" and node_shared_ffi=="false"', {
+      'dependencies': [ 'deps/libffi/libffi.gyp:libffi' ],
     }],
 
     [ 'node_shared_zstd=="false"', {
@@ -317,8 +338,8 @@
         'NODE_PLATFORM="sunos"',
       ],
     }],
-    [ '(OS=="freebsd" or OS=="linux" or OS=="openharmony") and node_shared=="false"'
-        ' and force_load=="true"', {
+    [ 'node_use_bundled_v8=="true" and (OS=="freebsd" or OS=="linux" or OS=="openharmony") '
+        'and node_shared=="false" and force_load=="true"', {
       'ldflags': [
         '-Wl,-z,noexecstack',
         '-Wl,--whole-archive <(v8_base)',
@@ -444,8 +465,17 @@
     }, {
       'defines': [ 'HAVE_SQLITE=0' ]
     }],
+    [ 'node_use_ffi=="true"', {
+      'defines': [ 'HAVE_FFI=1' ],
+    }, {
+      'defines': [ 'HAVE_FFI=0' ]
+    }],
+    [ 'node_shared_ffi=="true"', {
+      'defines': [ 'NODE_SHARED_FFI=1' ],
+    }, {
+      'defines': [ 'NODE_SHARED_FFI=0' ]
+    }],
     [ 'node_use_quic=="true"', {
-      'defines': [ 'HAVE_QUIC=1' ],
       'conditions': [
         [ 'node_shared_openssl=="false"', {
           'dependencies': [
@@ -458,8 +488,6 @@
           ],
         }],
       ],
-    }, {
-      'defines': [ 'HAVE_QUIC=0' ]
     }],
   ],
 }

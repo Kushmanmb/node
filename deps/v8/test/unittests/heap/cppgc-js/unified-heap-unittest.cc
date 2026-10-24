@@ -21,10 +21,11 @@
 #include "src/api/api-inl.h"
 #include "src/common/globals.h"
 #include "src/flags/flags.h"
+#include "src/heap/cppgc-internal/heap-object-header.h"
+#include "src/heap/cppgc-internal/sweeper.h"
 #include "src/heap/cppgc-js/cpp-heap.h"
-#include "src/heap/cppgc/heap-object-header.h"
-#include "src/heap/cppgc/sweeper.h"
 #include "src/heap/gc-tracer-inl.h"
+#include "src/heap/heap-controller.h"
 #include "src/objects/objects-inl.h"
 #include "test/unittests/heap/cppgc-js/unified-heap-utils.h"
 #include "test/unittests/heap/heap-utils.h"
@@ -804,13 +805,13 @@ TEST_F(UnifiedHeapTest, CppgcSweepingDuringMinorV8Sweeping) {
   Heap* heap = isolate()->heap();
   CppHeap* cppheap = CppHeap::From(heap->cpp_heap());
   cppheap->UpdateGCCapabilitiesFromFlagsForTesting();
-  CHECK_NOT_NULL(heap->cpp_heap());
   heap->CollectGarbage(AllocationSpace::OLD_SPACE,
                        GarbageCollectionReason::kTesting,
                        GCCallbackFlags::kNoGCCallbackFlags);
   CHECK(heap->sweeping_in_progress());
   CHECK(cppheap->sweeper().IsSweepingInProgress());
-  heap->EnsureSweepingCompleted(Heap::SweepingForcedFinalizationMode::kV8Only);
+  heap->EnsureSweepingCompleted(Heap::SweepingForcedFinalizationMode::kV8Only,
+                                CompleteSweepingReason::kTesting);
   CHECK(!heap->sweeping_in_progress());
   CHECK(cppheap->sweeper().IsSweepingInProgress());
   heap->CollectGarbage(AllocationSpace::NEW_SPACE,
@@ -824,7 +825,8 @@ TEST_F(UnifiedHeapTest, CppgcSweepingDuringMinorV8Sweeping) {
   CHECK(heap->minor_sweeping_in_progress());
   CHECK(!cppheap->sweeper().IsSweepingInProgress());
   heap->EnsureSweepingCompleted(
-      Heap::SweepingForcedFinalizationMode::kUnifiedHeap);
+      Heap::SweepingForcedFinalizationMode::kUnifiedHeap,
+      CompleteSweepingReason::kTesting);
   v8_flags.single_threaded_gc = single_threaded_gc_flag;
 }
 
@@ -848,18 +850,15 @@ TEST_F(UnifiedHeapTestWithRandomGCInterval, AllocationTimeout) {
   const int initial_allocation_timeout =
       allocator.get_allocation_timeout_for_testing();
   ASSERT_GT(initial_allocation_timeout, 0);
-  const auto current_epoch = isolate()->heap()->tracer()->CurrentEpoch(
-      GCTracer::Scope::MARK_COMPACTOR);
+  const auto current_epoch = isolate()->heap()->tracer()->CurrentEpoch();
   for (int i = 0; i < initial_allocation_timeout - 1; ++i) {
     MakeGarbageCollected<Wrappable>(allocation_handle());
   }
   // Expect no GC happened so far.
-  EXPECT_EQ(current_epoch, isolate()->heap()->tracer()->CurrentEpoch(
-                               GCTracer::Scope::MARK_COMPACTOR));
+  EXPECT_EQ(current_epoch, isolate()->heap()->tracer()->CurrentEpoch());
   // This allocation must cause a GC.
   MakeGarbageCollected<Wrappable>(allocation_handle());
-  EXPECT_EQ(current_epoch + 1, isolate()->heap()->tracer()->CurrentEpoch(
-                                   GCTracer::Scope::MARK_COMPACTOR));
+  EXPECT_EQ(current_epoch + 1, isolate()->heap()->tracer()->CurrentEpoch());
 }
 #endif  // V8_ENABLE_ALLOCATION_TIMEOUT
 
@@ -965,6 +964,34 @@ TEST_F(UnifiedHeapTest, WrappedWithConservativeGCInCtor) {
           });
   v8::Local<v8::Value> name = object->data(isolate)->Name();
   CHECK(name->IsString());
+}
+
+TEST_F(UnifiedHeapTest, TriggerGCWithNoIncrementalMarking) {
+  if (v8_flags.stress_incremental_marking) return;
+  if (v8_flags.stress_concurrent_allocation) return;
+  // This test should ensure that we trigger GC on cppgc allocations even when
+  // incremental marking is disabled.
+  v8_flags.incremental_marking = false;
+  const int initial_gc_count = heap()->ms_count();
+
+  // Set the allocation limits close to current consumption to trigger GC
+  // quickly.
+  const size_t current_old = heap()->OldGenerationConsumedBytes();
+  const size_t current_global = heap()->GlobalConsumedBytes();
+  heap()->limits()->SetAllocationLimit(current_old + 512 * KB,
+                                       current_global + 512 * KB);
+
+  static constexpr size_t kAllocationSize = 16 * KB;
+  static constexpr size_t kMaxAllocations = KB;
+  for (size_t i = 0;
+       i < kMaxAllocations && heap()->ms_count() == initial_gc_count; ++i) {
+    cppgc::MakeGarbageCollected<Wrappable>(
+        allocation_handle(), cppgc::AdditionalBytes(kAllocationSize));
+  }
+
+  EXPECT_GT(heap()->ms_count(), initial_gc_count)
+      << "GC should have been triggered when allocation limits are reached "
+         "even without incremental marking";
 }
 
 }  // namespace v8::internal

@@ -5,6 +5,7 @@
 #ifndef V8_BUILTINS_BUILTINS_H_
 #define V8_BUILTINS_BUILTINS_H_
 
+#include "src/base/bounds.h"
 #include "src/base/flags.h"
 #include "src/base/vector.h"
 #include "src/builtins/builtins-definitions.h"
@@ -47,6 +48,11 @@ static constexpr T FirstFromVarArgs(T x, ...) noexcept {
 #define BUILTIN_CODE(isolate, name) \
   (isolate)->builtins()->code_handle(i::Builtin::k##name)
 
+#define ADD_ONE(Name, ...) +1
+static constexpr int kBuiltinLoadICHandlerCount =
+    0 BUILTIN_LOAD_IC_HANDLER_LIST(ADD_ONE);
+#undef ADD_ONE
+
 enum class Builtin : int32_t {
   kNoBuiltinId = -1,
 #define DEF_ENUM(Name, ...) k##Name,
@@ -56,8 +62,11 @@ enum class Builtin : int32_t {
 #define EXTRACT_NAME(Name, ...) k##Name,
   // Define kFirstBytecodeHandler,
   kFirstBytecodeHandler = FirstFromVarArgs(
-      BUILTIN_LIST_BYTECODE_HANDLERS(EXTRACT_NAME, EXTRACT_NAME) 0)
+      BUILTIN_LIST_BYTECODE_HANDLERS(EXTRACT_NAME, EXTRACT_NAME) 0),
+  kFirstLoadICHandler =
+      FirstFromVarArgs(BUILTIN_LOAD_IC_HANDLER_LIST(EXTRACT_NAME) 0),
 #undef EXTRACT_NAME
+  kLastLoadICHandler = kFirstLoadICHandler + kBuiltinLoadICHandlerCount - 1
 };
 enum class TieringBuiltin : int32_t {
 #define DEF_ENUM(Name, ...) k##Name = static_cast<int32_t>(Builtin::k##Name),
@@ -147,6 +156,12 @@ class Builtins {
   static constexpr Builtin kLastTier0 =
       static_cast<Builtin>(kBuiltinTier0Count - 1);
 
+#ifdef V8_METAGEN_GENERATION_PASS
+  static constexpr int kFirstWideBytecodeHandler = 0;
+  static constexpr int kFirstExtraWideBytecodeHandler = 0;
+  static constexpr int kLastBytecodeHandlerPlusOne = 0;
+  static constexpr bool kBytecodeHandlersAreSortedLast = true;
+#else
   static constexpr int kFirstWideBytecodeHandler =
       static_cast<int>(Builtin::kFirstBytecodeHandler) +
       kNumberOfBytecodeHandlers;
@@ -156,6 +171,7 @@ class Builtins {
       kFirstExtraWideBytecodeHandler + kNumberOfWideBytecodeHandlers;
   static constexpr bool kBytecodeHandlersAreSortedLast =
       kLastBytecodeHandlerPlusOne == kBuiltinCount;
+#endif  // V8_METAGEN_GENERATION_PASS
   static_assert(kBytecodeHandlersAreSortedLast);
 
 #if V8_ENABLE_GEARBOX
@@ -332,6 +348,16 @@ class Builtins {
       Builtin builtin, int function_length,
       int formal_parameter_count_with_receiver);
 
+  // Checks that a call to this JS builtin is allowed to be generated in user
+  // code. Ensures that the formal parameter count matches the builtin's
+  // parameter count and that the builtin is not a JS trampoline. The latter
+  // is a sanity check against generating direct calls to JS trampolines - this
+  // just doesn't make sense.
+  // This is a similar to JSDispatchTable::IsCompatibleCode(..) but for
+  // builtins.
+  static inline bool IsCompatibleJSBuiltin(Builtin builtin,
+                                           uint16_t parameter_count);
+
   V8_EXPORT_PRIVATE static const char* name(Builtin builtin);
   V8_EXPORT_PRIVATE static const char* NameForStackTrace(Isolate* isolate,
                                                          Builtin builtin);
@@ -491,9 +517,10 @@ class Builtins {
     //    has JS calling convention for convenience.
     kEnabled = 1 << 0,
 
-    // Builtin represents some core V8 functionality which might or might not
-    // be currently used (for example, CompileLazy).
-    kCoreV8 = 1 << 1,
+    // Builtin represents some JS trampoline builtin that can be set as a
+    // JSFunction's code (for example, CompileLazy). It might or might not
+    // be currently used.
+    kCoreV8JSTrampoline = 1 << 1,
 
     // The builtin belongs to a JS language feature that's always available,
     // i.e. the builtin must be installed in some JSFunction by default.
@@ -520,7 +547,7 @@ class Builtins {
     kNonJSLinkage = 1 << 5,
 
     // Common combinations.
-    kJSTrampoline = kEnabled | kCoreV8,
+    kJSTrampoline = kEnabled | kCoreV8JSTrampoline,
     kCoreJSMandatory = kEnabled | kCoreJS,
     kCoreJSLazy = kEnabled | kCoreJS | kLazy,
 
@@ -532,20 +559,23 @@ class Builtins {
     kDisabledFlagDependentLazy = kFlagDependent | kLazy,
   };
   using JSBuiltinStateFlags = base::Flags<JSBuiltinStateFlag>;
-  static JSBuiltinStateFlags GetJSBuiltinState(Builtin builtin);
+  V8_EXPORT_PRIVATE static JSBuiltinStateFlags GetJSBuiltinState(
+      Builtin builtin);
 
   // Returns true for disabled builtins with JS linkage (all non-JS builtins
   // are considered enabled).
-  static bool IsDisabled(Builtin builtin) {
-    auto flags = Builtins::GetJSBuiltinState(builtin);
-    DCHECK_EQ(Builtins::HasJSLinkage(builtin),
-              !(flags & Builtins::JSBuiltinStateFlag::kNonJSLinkage));
-    if (!(flags & Builtins::JSBuiltinStateFlag::kNonJSLinkage) &&
-        !(flags & Builtins::JSBuiltinStateFlag::kEnabled)) {
-      return true;
-    }
-    return false;
-  }
+  static inline bool IsDisabled(Builtin builtin);
+
+  // Returns true if given builtin is a JS trampoline builtin - the builtin
+  // that can be installed into JSFunction as a code object. Note, that
+  // for example tiering trampoines are not allowed to be installed into
+  // JSFunctions. This predicate is used as an allow-list of cases where
+  // a signature mismatch is allowed. See JSDispatchTable::IsCompatibleCode().
+  static inline bool IsJSTrampoline(Builtin builtin);
+
+  // Returns true if given builtin is enabled and it's not a JS trampoline
+  // builtin.
+  static inline bool IsEnabledAndNotJSTrampoline(Builtin builtin);
 
 #ifdef DEBUG
   // Verify correctness of GetJSBuiltinState() which has to be maintained
@@ -607,6 +637,10 @@ class Builtins {
   static void Generate_CallApiCallbackImpl(MacroAssembler* masm,
                                            CallApiCallbackMode mode);
 
+  static void Generate_CallApiAccessorImpl(MacroAssembler* masm,
+                                           bool for_interceptor,
+                                           bool for_setter);
+
 #define DECLARE_ASM(Name, ...) \
   static void Generate_##Name(MacroAssembler* masm);
 #define DECLARE_TF(Name, ...) \
@@ -664,6 +698,51 @@ V8_INLINE constexpr bool IsBaselineTrampolineBuiltin(Builtin builtin_id) {
           builtin_id == Builtin::kBaselineOutOfLinePrologueDeopt);
 }
 
+V8_INLINE constexpr bool IsMonomorphicLoadICHandler(Builtin builtin_id) {
+  static_assert(Builtin::kFirstLoadICHandler ==
+                Builtin::kLoadICUninitializedBaseline);
+  static_assert(Builtin::kLastLoadICHandler == Builtin::kLoadICGenericBaseline);
+  return builtin_id > Builtin::kFirstLoadICHandler &&
+         builtin_id < Builtin::kLastLoadICHandler;
+}
+
+#ifdef V8_ENABLE_SPARKPLUG_PLUS
+#define DEFINE_TYPED_OP_CHECKER(Name, LowerBound, UpperBound)           \
+  V8_INLINE constexpr bool IsTyped##Name##Builtin(Builtin builtin_id) { \
+    return base::IsInRange(builtin_id,                                  \
+                           Builtin::k##Name##_##LowerBound##_Baseline,  \
+                           Builtin::k##Name##_##UpperBound##_Baseline); \
+  }
+
+// The Lower/Upper bound macro arguments should match the definition order in
+// builtins-definitions.h.
+DEFINE_TYPED_OP_CHECKER(Equal, Any, None)
+DEFINE_TYPED_OP_CHECKER(StrictEqual, Any, None)
+DEFINE_TYPED_OP_CHECKER(LessThan, Number, None)
+DEFINE_TYPED_OP_CHECKER(GreaterThan, Number, None)
+DEFINE_TYPED_OP_CHECKER(LessThanOrEqual, Number, None)
+DEFINE_TYPED_OP_CHECKER(GreaterThanOrEqual, Number, None)
+// Binary op typed-stub families.
+DEFINE_TYPED_OP_CHECKER(Add, None, String)
+DEFINE_TYPED_OP_CHECKER(Subtract, None, Number)
+DEFINE_TYPED_OP_CHECKER(Multiply, None, Number)
+DEFINE_TYPED_OP_CHECKER(Divide, None, Number)
+DEFINE_TYPED_OP_CHECKER(Modulus, None, Number)
+DEFINE_TYPED_OP_CHECKER(Exponentiate, None, Number)
+DEFINE_TYPED_OP_CHECKER(BitwiseOr, None, SignedSmall)
+DEFINE_TYPED_OP_CHECKER(BitwiseXor, None, SignedSmall)
+DEFINE_TYPED_OP_CHECKER(BitwiseAnd, None, SignedSmall)
+DEFINE_TYPED_OP_CHECKER(ShiftLeft, None, SignedSmall)
+DEFINE_TYPED_OP_CHECKER(ShiftRight, None, SignedSmall)
+DEFINE_TYPED_OP_CHECKER(ShiftRightLogical, None, SignedSmall)
+// Unary op typed-stub families.
+DEFINE_TYPED_OP_CHECKER(Increment, None, SignedSmall)
+DEFINE_TYPED_OP_CHECKER(Decrement, None, SignedSmall)
+DEFINE_TYPED_OP_CHECKER(Negate, None, Number)
+DEFINE_TYPED_OP_CHECKER(BitwiseNot, None, SignedSmall)
+#undef DEFINE_TYPED_OP_CHECKER
+#endif  // V8_ENABLE_SPARKPLUG_PLUS
+
 Builtin ExampleBuiltinForTorqueFunctionPointerType(
     size_t function_pointer_type_id);
 
@@ -675,18 +754,5 @@ bool BuiltinCanAllocate(Builtin builtin);
 
 }  // namespace internal
 }  // namespace v8
-
-// Helper while transitioning some functions to libm.
-#if defined(V8_USE_LIBM_TRIG_FUNCTIONS)
-#define SIN_IMPL(X)                                             \
-  v8_flags.use_libm_trig_functions ? base::ieee754::libm_sin(X) \
-                                   : base::ieee754::fdlibm_sin(X)
-#define COS_IMPL(X)                                             \
-  v8_flags.use_libm_trig_functions ? base::ieee754::libm_cos(X) \
-                                   : base::ieee754::fdlibm_cos(X)
-#else
-#define SIN_IMPL(X) base::ieee754::sin(X)
-#define COS_IMPL(X) base::ieee754::cos(X)
-#endif
 
 #endif  // V8_BUILTINS_BUILTINS_H_

@@ -15,6 +15,9 @@ namespace internal {
 
 // The Oddball describes objects null, undefined, true, and false.
 V8_OBJECT class Oddball : public PrimitiveHeapObject {
+  V8_IT_FIXED_VALUE(0x83);
+  V8_IT_ORDER(LAST);
+
  public:
   // [to_number_raw]: Cached raw to_number computed at startup.
   DECL_PRIMITIVE_ACCESSORS(to_number_raw, double)
@@ -65,6 +68,10 @@ V8_OBJECT class Oddball : public PrimitiveHeapObject {
   friend class maglev::MaglevAssembler;
   friend class compiler::AccessBuilder;
   friend class TorqueGeneratedOddballAsserts;
+  template <typename>
+  friend class StringBuiltinsReducer;
+  template <typename>
+  friend class TorqueGeneratedStringBuiltinsReducer;
 
   UnalignedDoubleMember to_number_raw_;
   TaggedMember<String> to_string_;
@@ -85,20 +92,27 @@ struct ObjectTraits<Oddball> {
 };
 
 V8_OBJECT class Null : public Oddball {
+  V8_IT_REUSE_PARENT;
 } V8_OBJECT_END;
 
 V8_OBJECT class Undefined : public Oddball {
+  V8_IT_REUSE_PARENT;
 } V8_OBJECT_END;
 
 V8_OBJECT class Boolean : public Oddball {
+  V8_IT_REUSE_PARENT;
+  V8_IT_NO_AUTO_CHECKER;
+
  public:
   V8_INLINE bool ToBool(Isolate* isolate) const;
 } V8_OBJECT_END;
 
 V8_OBJECT class True : public Boolean {
+  V8_IT_REUSE_PARENT;
 } V8_OBJECT_END;
 
 V8_OBJECT class False : public Boolean {
+  V8_IT_REUSE_PARENT;
 } V8_OBJECT_END;
 
 }  // namespace internal

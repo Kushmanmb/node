@@ -4,7 +4,7 @@ const abbrev = require('abbrev')
 // Please keep this list sorted alphabetically
 const commands = [
   'access',
-  'adduser',
+  'approve-scripts',
   'audit',
   'bugs',
   'cache',
@@ -12,6 +12,7 @@ const commands = [
   'completion',
   'config',
   'dedupe',
+  'deny-scripts',
   'deprecate',
   'diff',
   'dist-tag',
@@ -29,6 +30,7 @@ const commands = [
   'init',
   'install',
   'install-ci-test',
+  'install-scripts',
   'install-test',
   'link',
   'll',
@@ -39,6 +41,7 @@ const commands = [
   'outdated',
   'owner',
   'pack',
+  'patch',
   'ping',
   'pkg',
   'prefix',
@@ -54,18 +57,16 @@ const commands = [
   'sbom',
   'search',
   'set',
-  'shrinkwrap',
-  'star',
-  'stars',
+  'stage',
   'start',
   'stop',
   'team',
   'test',
   'token',
+  'trust',
   'undeprecate',
   'uninstall',
   'unpublish',
-  'unstar',
   'update',
   'version',
   'view',
@@ -97,6 +98,7 @@ const aliases = {
   i: 'install',
   it: 'install-test',
   cit: 'install-ci-test',
+  u: 'update',
   up: 'update',
   c: 'config',
   s: 'search',
@@ -136,7 +138,7 @@ const aliases = {
   sit: 'install-ci-test',
   urn: 'run',
   ogr: 'org',
-  'add-user': 'adduser',
+
 }
 
 const deref = (c) => {
@@ -161,9 +163,8 @@ const deref = (c) => {
 
   const abbrevs = abbrev(commands.concat(Object.keys(aliases)))
 
-  // first deref the abbrev, if there is one
-  // then resolve any aliases
-  // so `npm install-cl` will resolve to `install-clean` then to `ci`
+  // first deref the abbrev,
+  // if there is one then resolve any aliases so `npm install-cl` will resolve to `install-clean` then to `ci`
   let a = abbrevs[c]
   while (aliases[a]) {
     a = aliases[a]

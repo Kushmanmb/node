@@ -3,7 +3,7 @@
 const diagnosticsChannel = require('node:diagnostics_channel')
 const util = require('../core/util')
 const DeduplicationHandler = require('../handler/deduplication-handler')
-const { normalizeHeaders, makeCacheKey, makeDeduplicationKey } = require('../util/cache.js')
+const { getInterceptorOrigin, normalizeHeaders, makeCacheKey, makeDeduplicationKey } = require('../util/cache.js')
 
 const pendingRequestsChannel = diagnosticsChannel.channel('undici:request:pending-requests')
 
@@ -15,7 +15,8 @@ module.exports = (opts = {}) => {
   const {
     methods = ['GET'],
     skipHeaderNames = [],
-    excludeHeaderNames = []
+    excludeHeaderNames = [],
+    maxBufferSize = 5 * 1024 * 1024
   } = opts
 
   if (typeof opts !== 'object' || opts === null) {
@@ -40,13 +41,15 @@ module.exports = (opts = {}) => {
     throw new TypeError(`expected opts.excludeHeaderNames to be an array, got ${typeof excludeHeaderNames}`)
   }
 
+  if (!Number.isFinite(maxBufferSize) || maxBufferSize <= 0) {
+    throw new TypeError(`expected opts.maxBufferSize to be a positive finite number, got ${maxBufferSize}`)
+  }
+
   // Convert to lowercase Set for case-insensitive header matching
   const skipHeaderNamesSet = new Set(skipHeaderNames.map(name => name.toLowerCase()))
 
   // Convert to lowercase Set for case-insensitive header exclusion from deduplication key
   const excludeHeaderNamesSet = new Set(excludeHeaderNames.map(name => name.toLowerCase()))
-
-  const safeMethodsToNotDeduplicate = util.safeHTTPMethods.filter(method => methods.includes(method) === false)
 
   /**
    * Map of pending requests for deduplication
@@ -54,9 +57,10 @@ module.exports = (opts = {}) => {
    */
   const pendingRequests = new Map()
 
-  return dispatch => {
+  return (dispatch, interceptorOrigin) => {
     return (opts, handler) => {
-      if (!opts.origin || safeMethodsToNotDeduplicate.includes(opts.method)) {
+      const requestOrigin = getInterceptorOrigin(opts, interceptorOrigin)
+      if (!requestOrigin || opts.upgrade || methods.includes(opts.method) === false) {
         return dispatch(opts, handler)
       }
 
@@ -74,15 +78,19 @@ module.exports = (opts = {}) => {
         }
       }
 
-      const cacheKey = makeCacheKey(opts)
+      const cacheKey = makeCacheKey(opts, requestOrigin)
       const dedupeKey = makeDeduplicationKey(cacheKey, excludeHeaderNamesSet)
 
       // Check if there's already a pending request for this key
       const pendingHandler = pendingRequests.get(dedupeKey)
       if (pendingHandler) {
-        // Add this handler to the waiting list
-        pendingHandler.addWaitingHandler(handler)
-        return true
+        // Add this handler to the waiting list when safe.
+        // If body streaming has already started, this request must be sent independently.
+        if (pendingHandler.addWaitingHandler(handler)) {
+          return true
+        }
+
+        return dispatch(opts, handler)
       }
 
       // Create a new deduplication handler
@@ -94,7 +102,8 @@ module.exports = (opts = {}) => {
           if (pendingRequestsChannel.hasSubscribers) {
             pendingRequestsChannel.publish({ size: pendingRequests.size, key: dedupeKey, type: 'removed' })
           }
-        }
+        },
+        maxBufferSize
       )
 
       // Register the pending request

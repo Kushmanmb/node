@@ -145,9 +145,18 @@ class Float64 {
 
   explicit Float64(base::Double value) : bit_pattern_(value.AsUint64()) {}
 
+  static constexpr Float64 quiet_nan() {
+    return Float64::FromBits(
+        base::double_to_uint64(std::numeric_limits<double>::quiet_NaN()));
+  }
   static constexpr Float64 hole_nan() {
     return Float64::FromBits(kHoleNanInt64);
   }
+#ifdef V8_ENABLE_UNDEFINED_DOUBLE
+  static constexpr Float64 undefined_nan() {
+    return Float64::FromBits(kUndefinedNanInt64);
+  }
+#endif
 
   uint64_t get_bits() const { return bit_pattern_; }
   double get_scalar() const { return base::bit_cast<double>(bit_pattern_); }
@@ -155,6 +164,13 @@ class Float64 {
 #ifdef V8_ENABLE_UNDEFINED_DOUBLE
   bool is_undefined_nan() const { return bit_pattern_ == kUndefinedNanInt64; }
 #endif  // V8_ENABLE_UNDEFINED_DOUBLE
+  bool is_undefined_or_hole_nan() const {
+    return
+#ifdef V8_ENABLE_UNDEFINED_DOUBLE
+        is_undefined_nan() ||
+#endif
+        is_hole_nan();
+  }
 
   bool is_nan() const {
     // Even though {get_scalar()} might set the quiet NaN bit, it's ok here,
@@ -168,6 +184,8 @@ class Float64 {
     return is_nan() && (bit_pattern_ & (uint64_t{1} << 51));
   }
 
+  bool is_signalling_nan() const { return is_nan() && !is_quiet_nan(); }
+
   V8_WARN_UNUSED_RESULT Float64 to_quiet_nan() const {
     DCHECK(is_nan());
     Float64 quiet_nan{bit_pattern_ | (uint64_t{1} << 51)};
@@ -176,6 +194,14 @@ class Float64 {
   }
 
   static constexpr Float64 FromBits(uint64_t bits) { return Float64(bits); }
+
+  // Explicit static constructor that allows NaN values, when we don't care
+  // about the NaN bitpattern.
+  static constexpr Float64 FromMaybeNaN(double value) {
+    Float64 ret(base::double_to_uint64(value));
+    DCHECK_EQ(std::isnan(value), ret.is_nan());
+    return ret;
+  }
 
   constexpr bool operator==(const Float64&) const = default;
 

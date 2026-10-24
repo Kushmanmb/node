@@ -36,11 +36,11 @@ class InstructionSelectorTest : public TestWithNativeContextAndZone {
   class StreamBuilder final : public RawMachineAssembler {
    public:
     StreamBuilder(InstructionSelectorTest* test, MachineType return_type)
-        : RawMachineAssembler(test->isolate(),
-                              test->zone()->New<TFGraph>(test->zone()),
-                              MakeCallDescriptor(test->zone(), return_type),
-                              MachineType::PointerRepresentation(),
-                              MachineOperatorBuilder::kAllOptionalOps),
+        : RawMachineAssembler(
+              test->isolate(), test->zone()->New<TFGraph>(test->zone()),
+              MakeCallDescriptor(test->zone(), return_type),
+              MachineType::PointerRepresentation(),
+              InstructionSelector::SupportedMachineOperatorFlags()),
           test_(test) {}
     StreamBuilder(InstructionSelectorTest* test, MachineType return_type,
                   MachineType parameter0_type)
@@ -48,7 +48,7 @@ class InstructionSelectorTest : public TestWithNativeContextAndZone {
               test->isolate(), test->zone()->New<TFGraph>(test->zone()),
               MakeCallDescriptor(test->zone(), return_type, parameter0_type),
               MachineType::PointerRepresentation(),
-              MachineOperatorBuilder::kAllOptionalOps,
+              InstructionSelector::SupportedMachineOperatorFlags(),
               InstructionSelector::AlignmentRequirements()),
           test_(test) {}
     StreamBuilder(InstructionSelectorTest* test, MachineType return_type,
@@ -58,7 +58,7 @@ class InstructionSelectorTest : public TestWithNativeContextAndZone {
               MakeCallDescriptor(test->zone(), return_type, parameter0_type,
                                  parameter1_type),
               MachineType::PointerRepresentation(),
-              MachineOperatorBuilder::kAllOptionalOps),
+              InstructionSelector::SupportedMachineOperatorFlags()),
           test_(test) {}
     StreamBuilder(InstructionSelectorTest* test, MachineType return_type,
                   MachineType parameter0_type, MachineType parameter1_type,
@@ -68,19 +68,17 @@ class InstructionSelectorTest : public TestWithNativeContextAndZone {
               MakeCallDescriptor(test->zone(), return_type, parameter0_type,
                                  parameter1_type, parameter2_type),
               MachineType::PointerRepresentation(),
-              MachineOperatorBuilder::kAllOptionalOps),
+              InstructionSelector::SupportedMachineOperatorFlags()),
           test_(test) {}
 
-    Stream Build(CpuFeature feature) {
-      return Build(InstructionSelector::Features(feature));
-    }
+    Stream Build(CpuFeature feature) { return Build(CpuFeatureSet{feature}); }
     Stream Build(CpuFeature feature1, CpuFeature feature2) {
-      return Build(InstructionSelector::Features(feature1, feature2));
+      return Build(CpuFeatureSet{feature1, feature2});
     }
     Stream Build(StreamBuilderMode mode = kTargetInstructions) {
-      return Build(InstructionSelector::Features(), mode);
+      return Build(CpuFeatureSet{}, mode);
     }
-    Stream Build(InstructionSelector::Features features,
+    Stream Build(CpuFeatureSet features,
                  StreamBuilderMode mode = kTargetInstructions,
                  InstructionSelector::SourcePositionMode source_position_mode =
                      InstructionSelector::kAllSourcePositions);

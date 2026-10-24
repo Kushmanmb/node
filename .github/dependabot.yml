@@ -9,6 +9,11 @@ updates:
     commit-message:
       prefix: meta
     open-pull-requests-limit: 10
+    groups:
+      codeql-action:
+        applies-to: version-updates
+        patterns:
+          - github/codeql-action
 
   - package-ecosystem: npm
     directory: /tools/eslint
@@ -52,6 +57,9 @@ updates:
       semver-major-days: 5
       semver-minor-days: 5
       semver-patch-days: 5
+      exclude:
+        - '@doc-kit/*'
+        - '@node-core/*'
     commit-message:
       prefix: tools
     open-pull-requests-limit: 10

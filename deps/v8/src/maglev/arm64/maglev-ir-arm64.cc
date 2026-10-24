@@ -13,8 +13,12 @@
 #include "src/maglev/maglev-graph.h"
 #include "src/maglev/maglev-ir-inl.h"
 #include "src/maglev/maglev-ir.h"
+#include "src/objects/dictionary.h"
 #include "src/objects/feedback-cell.h"
+#include "src/objects/instance-type.h"
 #include "src/objects/js-function.h"
+#include "src/objects/property-details.h"
+#include "src/objects/swiss-name-dictionary.h"
 
 namespace v8 {
 namespace internal {
@@ -51,13 +55,13 @@ std::optional<int32_t> TryGetLogicalImmediateInt32ConstantInput(Node* node,
 }  // namespace
 
 void Int32NegateWithOverflow::SetValueLocationConstraints() {
-  UseRegister(value_input());
+  UseRegister(ValueInput());
   DefineAsRegister(this);
 }
 
 void Int32NegateWithOverflow::GenerateCode(MaglevAssembler* masm,
                                            const ProcessingState& state) {
-  Register value = ToRegister(value_input()).W();
+  Register value = ToRegister(ValueInput()).W();
   Register out = ToRegister(result()).W();
 
   // Deopt when result would be -0.
@@ -77,7 +81,7 @@ void Int32AbsWithOverflow::GenerateCode(MaglevAssembler* masm,
                                         const ProcessingState& state) {
   Register out = ToRegister(result()).W();
 
-  DCHECK(ToRegister(input()).W().Aliases(out));
+  DCHECK(ToRegister(ValueInput()).W().Aliases(out));
   __ AbsWithOverflow(out, out);
   // Output register must not be a register input into the eager deopt info.
   DCHECK_REGLIST_EMPTY(RegList{out} &
@@ -86,35 +90,35 @@ void Int32AbsWithOverflow::GenerateCode(MaglevAssembler* masm,
 }
 
 void Int32Increment::SetValueLocationConstraints() {
-  UseRegister(value_input());
+  UseRegister(ValueInput());
   DefineAsRegister(this);
 }
 void Int32Increment::GenerateCode(MaglevAssembler* masm,
                                   const ProcessingState& state) {
-  Register value = ToRegister(value_input()).W();
+  Register value = ToRegister(ValueInput()).W();
   Register out = ToRegister(result()).W();
   __ Add(out, value, Immediate(1));
 }
 
 void Int32Decrement::SetValueLocationConstraints() {
-  UseRegister(value_input());
+  UseRegister(ValueInput());
   DefineAsRegister(this);
 }
 void Int32Decrement::GenerateCode(MaglevAssembler* masm,
                                   const ProcessingState& state) {
-  Register value = ToRegister(value_input()).W();
+  Register value = ToRegister(ValueInput()).W();
   Register out = ToRegister(result()).W();
   __ Sub(out, value, Immediate(1));
 }
 
 void Int32IncrementWithOverflow::SetValueLocationConstraints() {
-  UseRegister(value_input());
+  UseRegister(ValueInput());
   DefineAsRegister(this);
 }
 
 void Int32IncrementWithOverflow::GenerateCode(MaglevAssembler* masm,
                                               const ProcessingState& state) {
-  Register value = ToRegister(value_input()).W();
+  Register value = ToRegister(ValueInput()).W();
   Register out = ToRegister(result()).W();
   __ Adds(out, value, Immediate(1));
   // Output register must not be a register input into the eager deopt info.
@@ -124,13 +128,13 @@ void Int32IncrementWithOverflow::GenerateCode(MaglevAssembler* masm,
 }
 
 void Int32DecrementWithOverflow::SetValueLocationConstraints() {
-  UseRegister(value_input());
+  UseRegister(ValueInput());
   DefineAsRegister(this);
 }
 
 void Int32DecrementWithOverflow::GenerateCode(MaglevAssembler* masm,
                                               const ProcessingState& state) {
-  Register value = ToRegister(value_input()).W();
+  Register value = ToRegister(ValueInput()).W();
   Register out = ToRegister(result()).W();
   __ Subs(out, value, Immediate(1));
   // Output register must not be a register input into the eager deopt info.
@@ -143,10 +147,10 @@ int BuiltinStringFromCharCode::MaxCallStackArgs() const {
   return AllocateDescriptor::GetStackParameterCount();
 }
 void BuiltinStringFromCharCode::SetValueLocationConstraints() {
-  if (code_input().node()->Is<Int32Constant>()) {
-    UseAny(code_input());
+  if (CharCodeInput().node()->Is<Int32Constant>()) {
+    UseAny(CharCodeInput());
   } else {
-    UseAndClobberRegister(code_input());
+    UseAndClobberRegister(CharCodeInput());
   }
   set_temporaries_needed(1);
   DefineAsRegister(this);
@@ -156,9 +160,10 @@ void BuiltinStringFromCharCode::GenerateCode(MaglevAssembler* masm,
   MaglevAssembler::TemporaryRegisterScope temps(masm);
   Register scratch = temps.Acquire();
   Register result_string = ToRegister(result());
-  if (Int32Constant* constant = code_input().node()->TryCast<Int32Constant>()) {
-    int32_t char_code = constant->value() & 0xFFFF;
-    if (0 <= char_code && char_code < String::kMaxOneByteCharCode) {
+  if (Int32Constant* constant =
+          CharCodeInput().node()->TryCast<Int32Constant>()) {
+    uint32_t char_code = constant->value() & 0xFFFF;
+    if (char_code <= String::kMaxOneByteCharCode) {
       __ LoadSingleCharacterString(result_string, char_code);
     } else {
       __ AllocateTwoByteString(register_snapshot(), result_string, 1);
@@ -169,13 +174,13 @@ void BuiltinStringFromCharCode::GenerateCode(MaglevAssembler* masm,
     }
   } else {
     __ StringFromCharCode(register_snapshot(), nullptr, result_string,
-                          ToRegister(code_input()), scratch,
+                          ToRegister(CharCodeInput()), scratch,
                           MaglevAssembler::CharCodeMaskMode::kMustApplyMask);
   }
 }
 
 void InlinedAllocation::SetValueLocationConstraints() {
-  UseRegister(allocation_block_input());
+  UseRegister(AllocationBlockInput());
   if (offset() == 0) {
     DefineSameAsFirst(this);
   } else {
@@ -186,8 +191,7 @@ void InlinedAllocation::SetValueLocationConstraints() {
 void InlinedAllocation::GenerateCode(MaglevAssembler* masm,
                                      const ProcessingState& state) {
   if (offset() != 0) {
-    __ Add(ToRegister(result()), ToRegister(allocation_block_input()),
-           offset());
+    __ Add(ToRegister(result()), ToRegister(AllocationBlockInput()), offset());
   }
 }
 
@@ -217,13 +221,13 @@ void RestLength::GenerateCode(MaglevAssembler* masm,
 int CheckedObjectToIndex::MaxCallStackArgs() const { return 0; }
 
 void CheckedIntPtrToInt32::SetValueLocationConstraints() {
-  UseRegister(input());
+  UseRegister(ValueInput());
   DefineSameAsFirst(this);
 }
 
 void CheckedIntPtrToInt32::GenerateCode(MaglevAssembler* masm,
                                         const ProcessingState& state) {
-  Register input_reg = ToRegister(input());
+  Register input_reg = ToRegister(ValueInput());
   __ CompareAndBranch(input_reg.X(),
                       Immediate(std::numeric_limits<int32_t>::max()), gt,
                       __ GetDeoptLabel(this, DeoptimizeReason::kNotInt32));
@@ -233,7 +237,7 @@ void CheckedIntPtrToInt32::GenerateCode(MaglevAssembler* masm,
 }
 
 void CheckFloat64SameValue::SetValueLocationConstraints() {
-  UseRegister(target_input());
+  UseRegister(ValueInput());
   set_temporaries_needed((value().get_scalar() == 0) ? 1 : 0);
   set_double_temporaries_needed(
       value().is_nan() || (value().get_scalar() == 0) ? 0 : 1);
@@ -242,7 +246,7 @@ void CheckFloat64SameValue::GenerateCode(MaglevAssembler* masm,
                                          const ProcessingState& state) {
   Label* fail = __ GetDeoptLabel(this, deoptimize_reason());
   MaglevAssembler::TemporaryRegisterScope temps(masm);
-  DoubleRegister target = ToDoubleRegister(target_input());
+  DoubleRegister target = ToDoubleRegister(ValueInput());
   if (value().is_nan()) {
     __ JumpIfNotNan(target, fail);
   } else if (value().get_scalar() == 0) {  // If value is +0.0 or -0.0.
@@ -262,61 +266,61 @@ void CheckFloat64SameValue::GenerateCode(MaglevAssembler* masm,
   }
 }
 void Int32Add::SetValueLocationConstraints() {
-  UseRegister(left_input());
+  UseRegister(LeftInput());
   if (TryGetAddImmediateInt32ConstantInput(this, kRightIndex)) {
-    UseAny(right_input());
+    UseAny(RightInput());
   } else {
-    UseRegister(right_input());
+    UseRegister(RightInput());
   }
   DefineAsRegister(this);
 }
 
 void Int32Add::GenerateCode(MaglevAssembler* masm,
                             const ProcessingState& state) {
-  Register left = ToRegister(left_input()).W();
+  Register left = ToRegister(LeftInput()).W();
   Register out = ToRegister(result()).W();
-  if (!right_input().operand().IsRegister()) {
+  if (!RightInput().operand().IsRegister()) {
     auto right_const = TryGetInt32ConstantInput(kRightIndex);
     DCHECK(right_const);
     __ Add(out, left, *right_const);
   } else {
-    Register right = ToRegister(right_input()).W();
+    Register right = ToRegister(RightInput()).W();
     __ Add(out, left, right);
   }
 }
 
 void Int32Subtract::SetValueLocationConstraints() {
-  UseRegister(left_input());
+  UseRegister(LeftInput());
   if (TryGetAddImmediateInt32ConstantInput(this, kRightIndex)) {
-    UseAny(right_input());
+    UseAny(RightInput());
   } else {
-    UseRegister(right_input());
+    UseRegister(RightInput());
   }
   DefineAsRegister(this);
 }
 void Int32Subtract::GenerateCode(MaglevAssembler* masm,
                                  const ProcessingState& state) {
-  Register left = ToRegister(left_input()).W();
+  Register left = ToRegister(LeftInput()).W();
   Register out = ToRegister(result()).W();
-  if (!right_input().operand().IsRegister()) {
+  if (!RightInput().operand().IsRegister()) {
     auto right_const = TryGetInt32ConstantInput(kRightIndex);
     DCHECK(right_const);
     __ Sub(out, left, *right_const);
   } else {
-    Register right = ToRegister(right_input()).W();
+    Register right = ToRegister(RightInput()).W();
     __ Sub(out, left, right);
   }
 }
 
 void Int32Multiply::SetValueLocationConstraints() {
-  UseRegister(left_input());
-  UseRegister(right_input());
+  UseRegister(LeftInput());
+  UseRegister(RightInput());
   DefineAsRegister(this);
 }
 void Int32Multiply::GenerateCode(MaglevAssembler* masm,
                                  const ProcessingState& state) {
-  Register left = ToRegister(left_input()).W();
-  Register right = ToRegister(right_input()).W();
+  Register left = ToRegister(LeftInput()).W();
+  Register right = ToRegister(RightInput()).W();
   Register out = ToRegister(result()).X();
 
   // TODO(leszeks): peephole optimise multiplication by a constant.
@@ -327,15 +331,15 @@ void Int32Multiply::GenerateCode(MaglevAssembler* masm,
 }
 
 void Int32MultiplyOverflownBits::SetValueLocationConstraints() {
-  UseRegister(left_input());
-  UseRegister(right_input());
+  UseRegister(LeftInput());
+  UseRegister(RightInput());
   DefineAsRegister(this);
 }
 
 void Int32MultiplyOverflownBits::GenerateCode(MaglevAssembler* masm,
                                               const ProcessingState& state) {
-  Register left = ToRegister(left_input()).W();
-  Register right = ToRegister(right_input()).W();
+  Register left = ToRegister(LeftInput()).W();
+  Register right = ToRegister(RightInput()).W();
   Register out = ToRegister(result()).X();
 
   // TODO(leszeks): peephole optimise multiplication by a constant.
@@ -347,14 +351,14 @@ void Int32MultiplyOverflownBits::GenerateCode(MaglevAssembler* masm,
 }
 
 void Int32Divide::SetValueLocationConstraints() {
-  UseRegister(left_input());
-  UseRegister(right_input());
+  UseRegister(LeftInput());
+  UseRegister(RightInput());
   DefineAsRegister(this);
 }
 void Int32Divide::GenerateCode(MaglevAssembler* masm,
                                const ProcessingState& state) {
-  Register left = ToRegister(left_input()).W();
-  Register right = ToRegister(right_input()).W();
+  Register left = ToRegister(LeftInput()).W();
+  Register right = ToRegister(RightInput()).W();
   Register out = ToRegister(result()).W();
 
   // TODO(leszeks): peephole optimise division by a constant.
@@ -366,25 +370,25 @@ void Int32Divide::GenerateCode(MaglevAssembler* masm,
 }
 
 void Int32AddWithOverflow::SetValueLocationConstraints() {
-  UseRegister(left_input());
+  UseRegister(LeftInput());
   if (TryGetAddImmediateInt32ConstantInput(this, kRightIndex)) {
-    UseAny(right_input());
+    UseAny(RightInput());
   } else {
-    UseRegister(right_input());
+    UseRegister(RightInput());
   }
   DefineAsRegister(this);
 }
 
 void Int32AddWithOverflow::GenerateCode(MaglevAssembler* masm,
                                         const ProcessingState& state) {
-  Register left = ToRegister(left_input()).W();
+  Register left = ToRegister(LeftInput()).W();
   Register out = ToRegister(result()).W();
-  if (!right_input().operand().IsRegister()) {
+  if (!RightInput().operand().IsRegister()) {
     auto right_const = TryGetInt32ConstantInput(kRightIndex);
     DCHECK(right_const);
     __ Adds(out, left, *right_const);
   } else {
-    Register right = ToRegister(right_input()).W();
+    Register right = ToRegister(RightInput()).W();
     __ Adds(out, left, right);
   }
   // The output register shouldn't be a register input into the eager deopt
@@ -395,24 +399,24 @@ void Int32AddWithOverflow::GenerateCode(MaglevAssembler* masm,
 }
 
 void Int32SubtractWithOverflow::SetValueLocationConstraints() {
-  UseRegister(left_input());
+  UseRegister(LeftInput());
   if (TryGetAddImmediateInt32ConstantInput(this, kRightIndex)) {
-    UseAny(right_input());
+    UseAny(RightInput());
   } else {
-    UseRegister(right_input());
+    UseRegister(RightInput());
   }
   DefineAsRegister(this);
 }
 void Int32SubtractWithOverflow::GenerateCode(MaglevAssembler* masm,
                                              const ProcessingState& state) {
-  Register left = ToRegister(left_input()).W();
+  Register left = ToRegister(LeftInput()).W();
   Register out = ToRegister(result()).W();
-  if (!right_input().operand().IsRegister()) {
+  if (!RightInput().operand().IsRegister()) {
     auto right_const = TryGetInt32ConstantInput(kRightIndex);
     DCHECK(right_const);
     __ Subs(out, left, *right_const);
   } else {
-    Register right = ToRegister(right_input()).W();
+    Register right = ToRegister(RightInput()).W();
     __ Subs(out, left, right);
   }
   // The output register shouldn't be a register input into the eager deopt
@@ -423,14 +427,14 @@ void Int32SubtractWithOverflow::GenerateCode(MaglevAssembler* masm,
 }
 
 void Int32MultiplyWithOverflow::SetValueLocationConstraints() {
-  UseRegister(left_input());
-  UseRegister(right_input());
+  UseRegister(LeftInput());
+  UseRegister(RightInput());
   DefineAsRegister(this);
 }
 void Int32MultiplyWithOverflow::GenerateCode(MaglevAssembler* masm,
                                              const ProcessingState& state) {
-  Register left = ToRegister(left_input()).W();
-  Register right = ToRegister(right_input()).W();
+  Register left = ToRegister(LeftInput()).W();
+  Register right = ToRegister(RightInput()).W();
   Register out = ToRegister(result()).W();
 
   // TODO(leszeks): peephole optimise multiplication by a constant.
@@ -472,21 +476,21 @@ void Int32MultiplyWithOverflow::GenerateCode(MaglevAssembler* masm,
 }
 
 void Int32DivideWithOverflow::SetValueLocationConstraints() {
-  UseRegister(left_input());
-  UseRegister(right_input());
+  UseRegister(LeftInput());
+  UseRegister(RightInput());
   DefineAsRegister(this);
 }
 void Int32DivideWithOverflow::GenerateCode(MaglevAssembler* masm,
                                            const ProcessingState& state) {
-  Register left = ToRegister(left_input()).W();
-  Register right = ToRegister(right_input()).W();
+  Register left = ToRegister(LeftInput()).W();
+  Register right = ToRegister(RightInput()).W();
   Register out = ToRegister(result()).W();
 
   // TODO(leszeks): peephole optimise division by a constant.
 
   // Pre-check for overflow, since idiv throws a division exception on overflow
-  // rather than setting the overflow flag. Logic copied from
-  // effect-control-linearizer.cc
+  // rather than setting the overflow flag. Logic is identical to
+  // REDUCE(WordBinopDeoptOnOverflow) in machine-lowering-reducer-inl.h
 
   // Check if {right} is positive (and not zero).
   __ Cmp(right, Immediate(0));
@@ -540,8 +544,8 @@ void Int32DivideWithOverflow::GenerateCode(MaglevAssembler* masm,
 }
 
 void Int32ModulusWithOverflow::SetValueLocationConstraints() {
-  UseAndClobberRegister(left_input());
-  UseAndClobberRegister(right_input());
+  UseAndClobberRegister(LeftInput());
+  UseAndClobberRegister(RightInput());
   DefineAsRegister(this);
 }
 void Int32ModulusWithOverflow::GenerateCode(MaglevAssembler* masm,
@@ -550,7 +554,7 @@ void Int32ModulusWithOverflow::GenerateCode(MaglevAssembler* masm,
   //   deopt if lhs < 0  // Minus zero.
   //   0
   //
-  // Using same algorithm as in EffectControlLinearizer:
+  // Using same algorithm as in MachineLoweringReducer:
   //   if rhs <= 0 then
   //     rhs = -rhs
   //     deopt if rhs == 0
@@ -566,8 +570,8 @@ void Int32ModulusWithOverflow::GenerateCode(MaglevAssembler* masm,
   //     else
   //       lhs % rhs
 
-  Register lhs = ToRegister(left_input()).W();
-  Register rhs = ToRegister(right_input()).W();
+  Register lhs = ToRegister(LeftInput()).W();
+  Register rhs = ToRegister(RightInput()).W();
   Register out = ToRegister(result()).W();
 
   static constexpr DeoptimizeReason deopt_reason =
@@ -643,25 +647,25 @@ void Int32ModulusWithOverflow::GenerateCode(MaglevAssembler* masm,
 
 #define DEF_BITWISE_BINOP(Instruction, opcode)                         \
   void Instruction::SetValueLocationConstraints() {                    \
-    UseRegister(left_input());                                         \
+    UseRegister(LeftInput());                                          \
     if (TryGetLogicalImmediateInt32ConstantInput(this, kRightIndex)) { \
-      UseAny(right_input());                                           \
+      UseAny(RightInput());                                            \
     } else {                                                           \
-      UseRegister(right_input());                                      \
+      UseRegister(RightInput());                                       \
     }                                                                  \
     DefineAsRegister(this);                                            \
   }                                                                    \
                                                                        \
   void Instruction::GenerateCode(MaglevAssembler* masm,                \
                                  const ProcessingState& state) {       \
-    Register left = ToRegister(left_input()).W();                      \
+    Register left = ToRegister(LeftInput()).W();                       \
     Register out = ToRegister(result()).W();                           \
-    if (!right_input().operand().IsRegister()) {                       \
+    if (!RightInput().operand().IsRegister()) {                        \
       auto right_const = TryGetInt32ConstantInput(kRightIndex);        \
       DCHECK(right_const);                                             \
       __ opcode(out, left, *right_const);                              \
     } else {                                                           \
-      Register right = ToRegister(right_input()).W();                  \
+      Register right = ToRegister(RightInput()).W();                   \
       __ opcode(out, left, right);                                     \
     }                                                                  \
   }
@@ -672,11 +676,11 @@ DEF_BITWISE_BINOP(Int32BitwiseXor, eor)
 
 #define DEF_SHIFT_BINOP(Instruction, opcode)                        \
   void Instruction::SetValueLocationConstraints() {                 \
-    UseRegister(left_input());                                      \
+    UseRegister(LeftInput());                                       \
     if (TryGetInt32ConstantInput(kRightIndex)) {                    \
-      UseAny(right_input());                                        \
+      UseAny(RightInput());                                         \
     } else {                                                        \
-      UseRegister(right_input());                                   \
+      UseRegister(RightInput());                                    \
     }                                                               \
     DefineAsRegister(this);                                         \
   }                                                                 \
@@ -684,7 +688,7 @@ DEF_BITWISE_BINOP(Int32BitwiseXor, eor)
   void Instruction::GenerateCode(MaglevAssembler* masm,             \
                                  const ProcessingState& state) {    \
     Register out = ToRegister(result()).W();                        \
-    Register left = ToRegister(left_input()).W();                   \
+    Register left = ToRegister(LeftInput()).W();                    \
     if (auto right_const = TryGetInt32ConstantInput(kRightIndex)) { \
       int right = *right_const & 31;                                \
       if (right == 0) {                                             \
@@ -693,7 +697,7 @@ DEF_BITWISE_BINOP(Int32BitwiseXor, eor)
         __ opcode(out, left, right);                                \
       }                                                             \
     } else {                                                        \
-      Register right = ToRegister(right_input()).W();               \
+      Register right = ToRegister(RightInput()).W();                \
       __ opcode##v(out, left, right);                               \
     }                                                               \
   }
@@ -703,106 +707,116 @@ DEF_SHIFT_BINOP(Int32ShiftRightLogical, lsr)
 #undef DEF_SHIFT_BINOP
 
 void Int32BitwiseNot::SetValueLocationConstraints() {
-  UseRegister(value_input());
+  UseRegister(ValueInput());
   DefineAsRegister(this);
 }
 
 void Int32BitwiseNot::GenerateCode(MaglevAssembler* masm,
                                    const ProcessingState& state) {
-  Register value = ToRegister(value_input()).W();
+  Register value = ToRegister(ValueInput()).W();
   Register out = ToRegister(result()).W();
   __ Mvn(out, value);
 }
 
 void Float64Add::SetValueLocationConstraints() {
-  UseRegister(left_input());
-  UseRegister(right_input());
+  UseRegister(LeftInput());
+  UseRegister(RightInput());
   DefineAsRegister(this);
 }
 
 void Float64Add::GenerateCode(MaglevAssembler* masm,
                               const ProcessingState& state) {
-  DoubleRegister left = ToDoubleRegister(left_input());
-  DoubleRegister right = ToDoubleRegister(right_input());
+  DoubleRegister left = ToDoubleRegister(LeftInput());
+  DoubleRegister right = ToDoubleRegister(RightInput());
   DoubleRegister out = ToDoubleRegister(result());
   __ Fadd(out, left, right);
 }
 
 void Float64Subtract::SetValueLocationConstraints() {
-  UseRegister(left_input());
-  UseRegister(right_input());
+  UseRegister(LeftInput());
+  UseRegister(RightInput());
   DefineAsRegister(this);
 }
 
 void Float64Subtract::GenerateCode(MaglevAssembler* masm,
                                    const ProcessingState& state) {
-  DoubleRegister left = ToDoubleRegister(left_input());
-  DoubleRegister right = ToDoubleRegister(right_input());
+  DoubleRegister left = ToDoubleRegister(LeftInput());
+  DoubleRegister right = ToDoubleRegister(RightInput());
   DoubleRegister out = ToDoubleRegister(result());
   __ Fsub(out, left, right);
 }
 
 void Float64Multiply::SetValueLocationConstraints() {
-  UseRegister(left_input());
-  UseRegister(right_input());
+  UseRegister(LeftInput());
+  UseRegister(RightInput());
   DefineAsRegister(this);
 }
 
 void Float64Multiply::GenerateCode(MaglevAssembler* masm,
                                    const ProcessingState& state) {
-  DoubleRegister left = ToDoubleRegister(left_input());
-  DoubleRegister right = ToDoubleRegister(right_input());
+  DoubleRegister left = ToDoubleRegister(LeftInput());
+  DoubleRegister right = ToDoubleRegister(RightInput());
   DoubleRegister out = ToDoubleRegister(result());
   __ Fmul(out, left, right);
 }
 
 void Float64Divide::SetValueLocationConstraints() {
-  UseRegister(left_input());
-  UseRegister(right_input());
+  UseRegister(LeftInput());
+  UseRegister(RightInput());
   DefineAsRegister(this);
 }
 
 void Float64Divide::GenerateCode(MaglevAssembler* masm,
                                  const ProcessingState& state) {
-  DoubleRegister left = ToDoubleRegister(left_input());
-  DoubleRegister right = ToDoubleRegister(right_input());
+  DoubleRegister left = ToDoubleRegister(LeftInput());
+  DoubleRegister right = ToDoubleRegister(RightInput());
   DoubleRegister out = ToDoubleRegister(result());
   __ Fdiv(out, left, right);
 }
 
 int Float64Modulus::MaxCallStackArgs() const { return 0; }
 void Float64Modulus::SetValueLocationConstraints() {
-  UseFixed(left_input(), v0);
-  UseFixed(right_input(), v1);
+  UseFixed(LeftInput(), v0);
+  UseFixed(RightInput(), v1);
   DefineSameAsFirst(this);
 }
 void Float64Modulus::GenerateCode(MaglevAssembler* masm,
                                   const ProcessingState& state) {
   AllowExternalCallThatCantCauseGC scope(masm);
-  __ CallCFunction(ExternalReference::mod_two_doubles_operation(), 0, 2);
+  // TODO(marja): We can generate better code for constant inputs and for inputs
+  // which are guaranteed to be integers.
+  __ Float64Mod(d0, d0, d1);
 }
 
 void Float64Negate::SetValueLocationConstraints() {
-  UseRegister(input());
+  UseRegister(ValueInput());
   DefineAsRegister(this);
 }
 void Float64Negate::GenerateCode(MaglevAssembler* masm,
                                  const ProcessingState& state) {
-  DoubleRegister value = ToDoubleRegister(input());
+  DoubleRegister value = ToDoubleRegister(ValueInput());
   DoubleRegister out = ToDoubleRegister(result());
   __ Fneg(out, value);
 }
 
 void Float64Abs::GenerateCode(MaglevAssembler* masm,
                               const ProcessingState& state) {
-  DoubleRegister in = ToDoubleRegister(input());
+  DoubleRegister in = ToDoubleRegister(ValueInput());
   DoubleRegister out = ToDoubleRegister(result());
   __ Fabs(out, in);
 }
 
+void Float64RoundToFloat32::GenerateCode(MaglevAssembler* masm,
+                                         const ProcessingState& state) {
+  DoubleRegister input = ToDoubleRegister(ValueInput());
+  DoubleRegister result = ToDoubleRegister(this->result());
+  __ Fcvt(result.S(), input);
+  __ Fcvt(result, result.S());
+}
+
 void Float64Round::GenerateCode(MaglevAssembler* masm,
                                 const ProcessingState& state) {
-  DoubleRegister in = ToDoubleRegister(input());
+  DoubleRegister in = ToDoubleRegister(ValueInput());
   DoubleRegister out = ToDoubleRegister(result());
   if (kind_ == Kind::kNearest) {
     MaglevAssembler::TemporaryRegisterScope temps(masm);
@@ -826,13 +840,15 @@ void Float64Round::GenerateCode(MaglevAssembler* masm,
     __ Frintp(out, in);
   } else if (kind_ == Kind::kFloor) {
     __ Frintm(out, in);
+  } else if (kind_ == Kind::kTrunc) {
+    __ Frintz(out, in);
   }
 }
 
 int Float64Exponentiate::MaxCallStackArgs() const { return 0; }
 void Float64Exponentiate::SetValueLocationConstraints() {
-  UseFixed(left_input(), v0);
-  UseFixed(right_input(), v1);
+  UseFixed(LeftInput(), v0);
+  UseFixed(RightInput(), v1);
   DefineSameAsFirst(this);
 }
 void Float64Exponentiate::GenerateCode(MaglevAssembler* masm,
@@ -842,30 +858,48 @@ void Float64Exponentiate::GenerateCode(MaglevAssembler* masm,
 }
 
 void Float64Min::SetValueLocationConstraints() {
-  UseRegister(left_input());
-  UseRegister(right_input());
-  DefineAsRegister(this);
+  UseRegister(LeftInput());
+  UseRegister(RightInput());
+  if (LeftInput().node() == RightInput().node()) {
+    DefineSameAsFirst(this);
+  } else {
+    DefineAsRegister(this);
+  }
 }
 
 void Float64Min::GenerateCode(MaglevAssembler* masm,
                               const ProcessingState& state) {
-  DoubleRegister left = ToDoubleRegister(left_input());
-  DoubleRegister right = ToDoubleRegister(right_input());
+  if (LeftInput().node() == RightInput().node()) {
+    DCHECK_EQ(ToDoubleRegister(result()), ToDoubleRegister(LeftInput()));
+    return;
+  }
+
+  DoubleRegister left = ToDoubleRegister(LeftInput());
+  DoubleRegister right = ToDoubleRegister(RightInput());
   DoubleRegister out = ToDoubleRegister(result());
 
   __ fmin(out, left, right);
 }
 
 void Float64Max::SetValueLocationConstraints() {
-  UseRegister(left_input());
-  UseRegister(right_input());
-  DefineAsRegister(this);
+  UseRegister(LeftInput());
+  UseRegister(RightInput());
+  if (LeftInput().node() == RightInput().node()) {
+    DefineSameAsFirst(this);
+  } else {
+    DefineAsRegister(this);
+  }
 }
 
 void Float64Max::GenerateCode(MaglevAssembler* masm,
                               const ProcessingState& state) {
-  DoubleRegister left = ToDoubleRegister(left_input());
-  DoubleRegister right = ToDoubleRegister(right_input());
+  if (LeftInput().node() == RightInput().node()) {
+    DCHECK_EQ(ToDoubleRegister(result()), ToDoubleRegister(LeftInput()));
+    return;
+  }
+
+  DoubleRegister left = ToDoubleRegister(LeftInput());
+  DoubleRegister right = ToDoubleRegister(RightInput());
   DoubleRegister out = ToDoubleRegister(result());
 
   __ fmax(out, left, right);
@@ -873,7 +907,7 @@ void Float64Max::GenerateCode(MaglevAssembler* masm,
 
 int Float64Ieee754Unary::MaxCallStackArgs() const { return 0; }
 void Float64Ieee754Unary::SetValueLocationConstraints() {
-  UseFixed(input(), v0);
+  UseFixed(ValueInput(), v0);
   DefineSameAsFirst(this);
 }
 void Float64Ieee754Unary::GenerateCode(MaglevAssembler* masm,
@@ -884,8 +918,8 @@ void Float64Ieee754Unary::GenerateCode(MaglevAssembler* masm,
 
 int Float64Ieee754Binary::MaxCallStackArgs() const { return 0; }
 void Float64Ieee754Binary::SetValueLocationConstraints() {
-  UseFixed(input_lhs(), v0);
-  UseFixed(input_rhs(), v1);
+  UseFixed(LeftInput(), v0);
+  UseFixed(RightInput(), v1);
   DefineSameAsFirst(this);
 }
 void Float64Ieee754Binary::GenerateCode(MaglevAssembler* masm,
@@ -895,30 +929,30 @@ void Float64Ieee754Binary::GenerateCode(MaglevAssembler* masm,
 }
 
 void Float64Sqrt::SetValueLocationConstraints() {
-  UseRegister(input());
+  UseRegister(ValueInput());
   DefineSameAsFirst(this);
 }
 void Float64Sqrt::GenerateCode(MaglevAssembler* masm,
                                const ProcessingState& state) {
-  DoubleRegister value = ToDoubleRegister(input());
+  DoubleRegister value = ToDoubleRegister(ValueInput());
   DoubleRegister result_register = ToDoubleRegister(result());
   __ fsqrt(result_register, value);
 }
 
 void LoadTypedArrayLength::SetValueLocationConstraints() {
-  UseRegister(receiver_input());
+  UseRegister(ValueInput());
   DefineAsRegister(this);
 }
 void LoadTypedArrayLength::GenerateCode(MaglevAssembler* masm,
                                         const ProcessingState& state) {
-  Register object = ToRegister(receiver_input());
+  Register object = ToRegister(ValueInput());
   Register result_register = ToRegister(result());
   if (v8_flags.debug_code) {
     __ AssertObjectType(object, JS_TYPED_ARRAY_TYPE,
                         AbortReason::kUnexpectedValue);
   }
   __ LoadBoundedSizeFromObject(result_register, object,
-                               JSTypedArray::kRawByteLengthOffset);
+                               offsetof(JSArrayBufferView, raw_byte_length_));
   int shift_size = ElementsKindToShiftSize(elements_kind_);
   if (shift_size > 0) {
     // TODO(leszeks): Merge this shift with the one in LoadBoundedSize.
@@ -929,75 +963,63 @@ void LoadTypedArrayLength::GenerateCode(MaglevAssembler* masm,
 
 int CheckJSDataViewBounds::MaxCallStackArgs() const { return 1; }
 void CheckJSDataViewBounds::SetValueLocationConstraints() {
-  UseRegister(receiver_input());
-  UseRegister(index_input());
-  set_temporaries_needed(1);
+  UseRegister(IndexInput());
+  UseRegister(ByteLengthInput());
+  int element_size = compiler::ExternalArrayElementSize(element_type_);
+  if (element_size > 1) {
+    set_temporaries_needed(1);
+  }
 }
 void CheckJSDataViewBounds::GenerateCode(MaglevAssembler* masm,
                                          const ProcessingState& state) {
-  MaglevAssembler::TemporaryRegisterScope temps(masm);
-  Register object = ToRegister(receiver_input());
-  Register index = ToRegister(index_input());
-  if (v8_flags.debug_code) {
-    __ AssertObjectType(object, JS_DATA_VIEW_TYPE,
-                        AbortReason::kUnexpectedValue);
-  }
+  Register index = ToRegister(IndexInput());
+  Register byte_length = ToRegister(ByteLengthInput());
 
-  // Normal DataView (backed by AB / SAB) or non-length tracking backed by GSAB.
-  Register byte_length = temps.Acquire();
-  __ LoadBoundedSizeFromObject(byte_length, object,
-                               JSDataView::kRawByteLengthOffset);
+  MaglevAssembler::TemporaryRegisterScope temps(masm);
+  Register limit = byte_length;
 
   int element_size = compiler::ExternalArrayElementSize(element_type_);
   if (element_size > 1) {
-    __ Subs(byte_length, byte_length, Immediate(element_size - 1));
+    limit = temps.Acquire();
+    __ Subs(limit, byte_length, Immediate(element_size - 1));
     __ EmitEagerDeoptIf(mi, DeoptimizeReason::kOutOfBounds, this);
   }
-  __ Cmp(index, byte_length);
+  __ SignExtend32To64Bits(index, index);
+  __ Cmp(index, limit);
   __ EmitEagerDeoptIf(hs, DeoptimizeReason::kOutOfBounds, this);
 }
 
-void HoleyFloat64ToMaybeNanFloat64::SetValueLocationConstraints() {
-  UseRegister(input());
+void ChangeFloat64ToHoleyFloat64::SetValueLocationConstraints() {
+  UseRegister(ValueInput());
   DefineAsRegister(this);
 }
-void HoleyFloat64ToMaybeNanFloat64::GenerateCode(MaglevAssembler* masm,
-                                                 const ProcessingState& state) {
-  // The hole value is a signalling NaN, so just silence it to get the float64
-  // value.
-  __ CanonicalizeNaN(ToDoubleRegister(result()), ToDoubleRegister(input()));
-}
-
-void Float64ToHoleyFloat64::SetValueLocationConstraints() {
-  UseRegister(input());
-  DefineAsRegister(this);
-}
-void Float64ToHoleyFloat64::GenerateCode(MaglevAssembler* masm,
-                                         const ProcessingState& state) {
+void ChangeFloat64ToHoleyFloat64::GenerateCode(MaglevAssembler* masm,
+                                               const ProcessingState& state) {
   // A Float64 value could contain a NaN with the bit pattern that has a special
   // interpretation in the HoleyFloat64 representation, so we need to canicalize
   // those before changing representation.
-  __ CanonicalizeNaN(ToDoubleRegister(result()), ToDoubleRegister(input()));
+  __ CanonicalizeNaN(ToDoubleRegister(result()),
+                     ToDoubleRegister(ValueInput()));
 }
 
-#ifdef V8_ENABLE_UNDEFINED_DOUBLE
-void ConvertHoleNanToUndefinedNan::SetValueLocationConstraints() {
-  UseRegister(input());
+void Float64ToSilencedFloat64::SetValueLocationConstraints() {
+  UseRegister(ValueInput());
   DefineSameAsFirst(this);
-  set_temporaries_needed(1);
 }
-void ConvertHoleNanToUndefinedNan::GenerateCode(MaglevAssembler* masm,
-                                                const ProcessingState& state) {
-  DoubleRegister value = ToDoubleRegister(input());
-  Label done;
+void Float64ToSilencedFloat64::GenerateCode(MaglevAssembler* masm,
+                                            const ProcessingState& state) {
+  // The hole value is a signalling NaN, so just silence it to get the
+  // float64 value.
+  __ CanonicalizeNaN(ToDoubleRegister(this->result()),
+                     ToDoubleRegister(ValueInput()));
+}
 
-  MaglevAssembler::TemporaryRegisterScope temps(masm);
-  Register scratch = temps.Acquire();
-  __ JumpIfNotHoleNan(value, scratch.W(), &done);
-  __ Move(value, UndefinedNan());
-  __ Bind(&done);
+void UnsafeFloat64ToHoleyFloat64::SetValueLocationConstraints() {
+  UseRegister(ValueInput());
+  DefineSameAsFirst(this);
 }
-#endif  // V8_ENABLE_UNDEFINED_DOUBLE
+void UnsafeFloat64ToHoleyFloat64::GenerateCode(MaglevAssembler* masm,
+                                               const ProcessingState& state) {}
 
 namespace {
 
@@ -1011,47 +1033,30 @@ void HandleInterruptsAndTiering(MaglevAssembler* masm, ZoneLabelRef done,
     __ ResetLastYoungAllocation();
   }
 
-  // For loops, first check for interrupts. Don't do this for returns, as we
-  // can't lazy deopt to the end of a return.
+  // Call into the TieringManager. For loops, pass the OSR bytecode offset and
+  // define a lazy deopt point since they double as interrupt checks.
   if (type == ReduceInterruptBudgetType::kLoop) {
-    Label next;
-    // Here, we only care about interrupts since we've already guarded against
-    // real stack overflows on function entry.
-    {
-      Register stack_limit = scratch0;
-      __ LoadStackLimit(stack_limit, StackLimitKind::kInterruptStackLimit);
-      __ Cmp(sp, stack_limit);
-      __ B(&next, hi);
-    }
-
-    // An interrupt has been requested and we must call into runtime to handle
-    // it; since we already pay the call cost, combine with the TieringManager
-    // call.
-    {
-      SaveRegisterStateForCall save_register_state(masm,
-                                                   node->register_snapshot());
-      Register function = scratch0;
-      __ Ldr(function, MemOperand(fp, StandardFrameConstants::kFunctionOffset));
-      __ Push(function);
-      // Move into kContextRegister after the load into scratch0, just in case
-      // scratch0 happens to be kContextRegister.
-      __ Move(kContextRegister, masm->native_context().object());
-      __ CallRuntime(Runtime::kBytecodeBudgetInterruptWithStackCheck_Maglev, 1);
-      save_register_state.DefineSafepointWithLazyDeopt(node->lazy_deopt_info());
-    }
-    __ B(*done);  // All done, continue.
-    __ Bind(&next);
-  }
-
-  // No pending interrupts. Call into the TieringManager if needed.
-  {
+    SaveRegisterStateForCall save_register_state(masm,
+                                                 node->register_snapshot());
+    UseScratchRegisterScope temps(masm);
+    Register function = scratch0;
+    Register osr_offset = temps.AcquireX();
+    __ Ldr(function, MemOperand(fp, StandardFrameConstants::kFunctionOffset));
+    __ Move(
+        osr_offset,
+        Smi::FromInt(
+            node->Cast<ReduceInterruptBudgetForLoop>()->osr_offset().ToInt()));
+    __ Push(function, osr_offset);
+    __ Move(kContextRegister, masm->native_context().object());
+    __ CallRuntime(Runtime::kBytecodeBudgetLoopInterrupt_Maglev, 2);
+    save_register_state.DefineSafepointWithLazyDeopt(node->lazy_deopt_info());
+  } else {
+    DCHECK_EQ(type, ReduceInterruptBudgetType::kReturn);
     SaveRegisterStateForCall save_register_state(masm,
                                                  node->register_snapshot());
     Register function = scratch0;
     __ Ldr(function, MemOperand(fp, StandardFrameConstants::kFunctionOffset));
     __ Push(function);
-    // Move into kContextRegister after the load into scratch0, just in case
-    // scratch0 happens to be kContextRegister.
     __ Move(kContextRegister, masm->native_context().object());
     // Note: must not cause a lazy deopt!
     __ CallRuntime(Runtime::kBytecodeBudgetInterrupt_Maglev, 1);
@@ -1066,11 +1071,11 @@ void GenerateReduceInterruptBudget(MaglevAssembler* masm, Node* node,
   MaglevAssembler::TemporaryRegisterScope temps(masm);
   Register scratch = temps.Acquire();
   Register budget = scratch.W();
-  __ Ldr(budget,
-         FieldMemOperand(feedback_cell, FeedbackCell::kInterruptBudgetOffset));
+  __ Ldr(budget, FieldMemOperand(feedback_cell,
+                                 offsetof(FeedbackCell, interrupt_budget_)));
   __ Subs(budget, budget, Immediate(amount));
-  __ Str(budget,
-         FieldMemOperand(feedback_cell, FeedbackCell::kInterruptBudgetOffset));
+  __ Str(budget, FieldMemOperand(feedback_cell,
+                                 offsetof(FeedbackCell, interrupt_budget_)));
   ZoneLabelRef done(masm);
   __ JumpToDeferredIf(lt, HandleInterruptsAndTiering, done, node, type,
                       scratch);
@@ -1079,25 +1084,27 @@ void GenerateReduceInterruptBudget(MaglevAssembler* masm, Node* node,
 
 }  // namespace
 
-int ReduceInterruptBudgetForLoop::MaxCallStackArgs() const { return 1; }
 void ReduceInterruptBudgetForLoop::SetValueLocationConstraints() {
-  UseRegister(feedback_cell());
-  set_temporaries_needed(1);
+  UseRegister(FeedbackCellInput());
+  set_temporaries_needed(try_osr() ? 3 : 2);
 }
 void ReduceInterruptBudgetForLoop::GenerateCode(MaglevAssembler* masm,
                                                 const ProcessingState& state) {
-  GenerateReduceInterruptBudget(masm, this, ToRegister(feedback_cell()),
+  GenerateReduceInterruptBudget(masm, this, ToRegister(FeedbackCellInput()),
                                 ReduceInterruptBudgetType::kLoop, amount());
+  if (try_osr()) {
+    masm->TryOnStackReplacement(this, feedback_slot());
+  }
 }
 
 int ReduceInterruptBudgetForReturn::MaxCallStackArgs() const { return 1; }
 void ReduceInterruptBudgetForReturn::SetValueLocationConstraints() {
-  UseRegister(feedback_cell());
+  UseRegister(FeedbackCellInput());
   set_temporaries_needed(1);
 }
 void ReduceInterruptBudgetForReturn::GenerateCode(
     MaglevAssembler* masm, const ProcessingState& state) {
-  GenerateReduceInterruptBudget(masm, this, ToRegister(feedback_cell()),
+  GenerateReduceInterruptBudget(masm, this, ToRegister(FeedbackCellInput()),
                                 ReduceInterruptBudgetType::kReturn, amount());
 }
 
@@ -1105,10 +1112,10 @@ void ReduceInterruptBudgetForReturn::GenerateCode(
 // Control nodes
 // ---
 void Return::SetValueLocationConstraints() {
-  UseFixed(value_input(), kReturnRegister0);
+  UseFixed(ValueInput(), kReturnRegister0);
 }
 void Return::GenerateCode(MaglevAssembler* masm, const ProcessingState& state) {
-  DCHECK_EQ(ToRegister(value_input()), kReturnRegister0);
+  DCHECK_EQ(ToRegister(ValueInput()), kReturnRegister0);
   // Read the formal number of parameters from the top level compilation unit
   // (i.e. the outermost, non inlined function).
   int formal_params_size =
@@ -1142,6 +1149,90 @@ void Return::GenerateCode(MaglevAssembler* masm, const ProcessingState& state) {
   // Drop receiver + arguments according to dynamic arguments size.
   __ DropArguments(params_size);
   __ Ret();
+}
+
+void LoadDictionaryField::GenerateCode(MaglevAssembler* masm,
+                                       const ProcessingState& state) {
+  Register object = ToRegister(ObjectInput());
+  Register receiver = ToRegister(ReceiverInput());
+  Register result_reg = ToRegister(result());
+
+  ZoneLabelRef done(masm);
+
+  Label* deferred_fallback = __ MakeDeferredCode(
+      [](MaglevAssembler* masm, ZoneLabelRef done, LoadDictionaryField* node,
+         Register object, Register receiver, Register result_reg) {
+        {
+          // Save live registers so the fast path remains register-allocation
+          // friendly.
+          RegisterSnapshot snapshot = node->register_snapshot();
+          snapshot.live_registers.clear(result_reg);
+          snapshot.live_tagged_registers.clear(result_reg);
+          SaveRegisterStateForCall save_register_state(masm, snapshot);
+
+          if (node->is_super()) {
+            __ CallBuiltin<Builtin::kLoadSuperIC>(
+                node->ContextInput(), receiver, object, node->name().object(),
+                TaggedIndex::FromIntptr(node->feedback().index()),
+                node->feedback().vector);
+          } else {
+            __ CallBuiltin<Builtin::kLoadIC>(
+                node->ContextInput(), object, node->name().object(),
+                TaggedIndex::FromIntptr(node->feedback().index()),
+                node->feedback().vector);
+          }
+          masm->DefineExceptionHandlerPoint(node);
+          save_register_state.DefineSafepointWithLazyDeopt(
+              node->lazy_deopt_info());
+
+          __ Move(result_reg, kReturnRegister0);
+        }
+        __ Jump(*done);
+      },
+      done, this, object, receiver, result_reg);
+
+  MaglevAssembler::TemporaryRegisterScope temps(masm);
+  Register properties = temps.Acquire();
+
+  __ LoadTaggedField(properties, object,
+                     offsetof(JSReceiver, properties_or_hash_));
+
+  if (!V8_ENABLE_SWISS_NAME_DICTIONARY_BOOL) {
+    int entry_index = NameDictionary::kElementsStartIndex +
+                      dictionary_index() * NameDictionary::kEntrySize;
+    int max_index = entry_index + NameDictionary::kEntrySize - 1;
+
+    Register length = temps.Acquire();
+    __ Ldr(length.W(),
+           FieldMemOperand(properties, FixedArrayBase::kLengthOffset));
+    __ Cmp(length.W(), Immediate(max_index));
+    __ JumpIf(ls, deferred_fallback);
+
+    Register scratch = length;
+    int key_offset = NameDictionary::OffsetOfElementAt(
+        entry_index + NameDictionary::kEntryKeyIndex);
+    __ LoadTaggedField(scratch, properties, key_offset);
+    __ CompareTaggedAndJumpIf(scratch, name().object(), kNotEqual,
+                              deferred_fallback);
+
+    __ LoadTaggedField(scratch, properties,
+                       NameDictionary::OffsetOfElementAt(
+                           entry_index + NameDictionary::kEntryDetailsIndex));
+    __ SmiToInt32(scratch);
+    __ And(scratch.W(), scratch.W(),
+           Immediate(PropertyDetails::KindField::kMask));
+    __ CompareInt32AndJumpIf(
+        scratch.W(), PropertyDetails::KindField::encode(PropertyKind::kData),
+        kNotEqual, deferred_fallback);
+
+    __ LoadTaggedField(result_reg, properties,
+                       NameDictionary::OffsetOfElementAt(
+                           entry_index + NameDictionary::kEntryValueIndex));
+  } else {
+    UNREACHABLE();
+  }
+
+  __ bind(*done);
 }
 
 }  // namespace maglev

@@ -4,8 +4,7 @@
 
 #include <optional>
 
-#include "src/asmjs/asm-js.h"
-#include "src/codegen/compilation-cache.h"
+#include "src/codegen/assembler-inl.h"
 #include "src/codegen/compiler.h"
 #include "src/common/assert-scope.h"
 #include "src/common/globals.h"
@@ -14,10 +13,15 @@
 #include "src/execution/arguments-inl.h"
 #include "src/execution/frames-inl.h"
 #include "src/execution/isolate-inl.h"
+#include "src/objects/abstract-code-inl.h"
 #include "src/objects/js-array-buffer-inl.h"
 #include "src/objects/objects-inl.h"
 #include "src/objects/shared-function-info.h"
 #include "src/runtime/runtime-utils.h"
+
+#ifdef V8_ENABLE_SPARKPLUG_PLUS
+#include "src/common/code-memory-access.h"
+#endif  // V8_ENABLE_SPARKPLUG_PLUS
 
 namespace v8::internal {
 
@@ -26,14 +30,13 @@ void LogExecution(Isolate* isolate, DirectHandle<JSFunction> function) {
   DCHECK(v8_flags.log_function_events);
   if (!function->has_feedback_vector()) return;
   DCHECK(function->IsLoggingRequested(isolate));
-  IsolateGroup::current()->js_dispatch_table()->ResetTieringRequest(
-      function->dispatch_handle());
+  isolate->js_dispatch_table().ResetTieringRequest(function->dispatch_handle());
   DirectHandle<SharedFunctionInfo> sfi(function->shared(), isolate);
   DirectHandle<String> name = SharedFunctionInfo::DebugName(isolate, sfi);
   DisallowGarbageCollection no_gc;
   Tagged<SharedFunctionInfo> raw_sfi = *sfi;
   std::string event_name = "first-execution";
-  CodeKind kind = function->abstract_code(isolate)->kind(isolate);
+  CodeKind kind = function->abstract_code(isolate)->kind();
   // Not adding "-interpreter" for tooling backwards compatibility.
   if (kind != CodeKind::INTERPRETED_FUNCTION) {
     event_name += "-";
@@ -43,6 +46,173 @@ void LogExecution(Isolate* isolate, DirectHandle<JSFunction> function) {
                    event_name.c_str(), Cast<Script>(raw_sfi->script())->id(), 0,
                    raw_sfi->StartPosition(), raw_sfi->EndPosition(), *name));
 }
+
+#ifdef V8_ENABLE_SPARKPLUG_PLUS
+Builtin GetTypedBuiltinForCompare(int hint, Builtin current_builtin) noexcept {
+  Builtin target_builtin = Builtin::kNoBuiltinId;
+
+#define TYPED_COMPARE_DISPATCH_CASE(hint_value, op_type)                     \
+  case static_cast<int>(CompareOperationFeedback::TypeIndex::k##hint_value): \
+    target_builtin = Builtin::k##op_type##_##hint_value##_Baseline;          \
+    break;
+
+#define TYPED_COMPARE_FAMILY_SWITCH(stub_list, op_type)              \
+  if (IsTyped##op_type##Builtin(current_builtin)) {                  \
+    switch (hint) {                                                  \
+      stub_list(TYPED_COMPARE_DISPATCH_CASE, op_type) default        \
+          : target_builtin = Builtin::k##op_type##_Generic_Baseline; \
+      break;                                                         \
+    }                                                                \
+  } else /* NOLINT */
+
+#define TYPED_COMPARE_DISPATCH_LIST(V)                   \
+  V(TYPED_STRICTEQUAL_STUB_LIST, StrictEqual)            \
+  V(TYPED_EQUAL_STUB_LIST, Equal)                        \
+  V(TYPED_RELATIONAL_COMPARE_STUB_LIST, LessThan)        \
+  V(TYPED_RELATIONAL_COMPARE_STUB_LIST, GreaterThan)     \
+  V(TYPED_RELATIONAL_COMPARE_STUB_LIST, LessThanOrEqual) \
+  V(TYPED_RELATIONAL_COMPARE_STUB_LIST, GreaterThanOrEqual)
+
+  TYPED_COMPARE_DISPATCH_LIST(TYPED_COMPARE_FAMILY_SWITCH)
+  /* else */ {}
+
+  return target_builtin;
+#undef TYPED_COMPARE_DISPATCH_LIST
+#undef TYPED_COMPARE_FAMILY_SWITCH
+#undef TYPED_COMPARE_DISPATCH_CASE
+}
+
+Builtin GetTypedBuiltinForBinop(int hint, Builtin current_builtin) noexcept {
+  Builtin target_builtin = Builtin::kNoBuiltinId;
+
+#define TYPED_BINOP_DISPATCH_CASE(hint_value, op_type)                      \
+  case static_cast<int>(BinaryOperationFeedback::TypeIndex::k##hint_value): \
+    target_builtin = Builtin::k##op_type##_##hint_value##_Baseline;         \
+    break;
+
+#define TYPED_BINOP_FAMILY_SWITCH(stub_list, op_type)                \
+  if (IsTyped##op_type##Builtin(current_builtin)) {                  \
+    switch (hint) {                                                  \
+      stub_list(TYPED_BINOP_DISPATCH_CASE, op_type) default          \
+          : target_builtin = Builtin::k##op_type##_Generic_Baseline; \
+      break;                                                         \
+    }                                                                \
+  } else /* NOLINT */
+
+#define TYPED_BINOP_DISPATCH_LIST(V)           \
+  V(TYPED_ADD_STUB_LIST, Add)                  \
+  V(TYPED_BINOP_STUB_LIST, Subtract)           \
+  V(TYPED_BINOP_STUB_LIST, Multiply)           \
+  V(TYPED_BINOP_STUB_LIST, Divide)             \
+  V(TYPED_BINOP_STUB_LIST, Modulus)            \
+  V(TYPED_EXP_STUB_LIST, Exponentiate)         \
+  V(TYPED_BITWISE_BINOP_STUB_LIST, BitwiseOr)  \
+  V(TYPED_BITWISE_BINOP_STUB_LIST, BitwiseXor) \
+  V(TYPED_BITWISE_BINOP_STUB_LIST, BitwiseAnd) \
+  V(TYPED_BITWISE_BINOP_STUB_LIST, ShiftLeft)  \
+  V(TYPED_BITWISE_BINOP_STUB_LIST, ShiftRight) \
+  V(TYPED_BITWISE_BINOP_STUB_LIST, ShiftRightLogical)
+
+  TYPED_BINOP_DISPATCH_LIST(TYPED_BINOP_FAMILY_SWITCH)
+  /* else */ {}
+
+  return target_builtin;
+#undef TYPED_BINOP_DISPATCH_LIST
+#undef TYPED_BINOP_FAMILY_SWITCH
+#undef TYPED_BINOP_DISPATCH_CASE
+}
+
+Builtin GetTypedBuiltinForUnary(int hint, Builtin current_builtin) noexcept {
+  Builtin target_builtin = Builtin::kNoBuiltinId;
+
+#define TYPED_UNOP_DISPATCH_CASE(hint_value, op_type)                       \
+  case static_cast<int>(BinaryOperationFeedback::TypeIndex::k##hint_value): \
+    target_builtin = Builtin::k##op_type##_##hint_value##_Baseline;         \
+    break;
+
+#define TYPED_UNOP_FAMILY_SWITCH(stub_list, op_type)                 \
+  if (IsTyped##op_type##Builtin(current_builtin)) {                  \
+    switch (hint) {                                                  \
+      stub_list(TYPED_UNOP_DISPATCH_CASE, op_type) default           \
+          : target_builtin = Builtin::k##op_type##_Generic_Baseline; \
+      break;                                                         \
+    }                                                                \
+  } else /* NOLINT */
+
+#define TYPED_UNOP_DISPATCH_LIST(V)   \
+  V(TYPED_UNARY_STUB_LIST, Increment) \
+  V(TYPED_UNARY_STUB_LIST, Decrement) \
+  V(TYPED_NEGATE_STUB_LIST, Negate)   \
+  V(TYPED_UNARY_STUB_LIST, BitwiseNot)
+
+  TYPED_UNOP_DISPATCH_LIST(TYPED_UNOP_FAMILY_SWITCH)
+  /* else */ {}
+
+  return target_builtin;
+#undef TYPED_UNOP_DISPATCH_LIST
+#undef TYPED_UNOP_FAMILY_SWITCH
+#undef TYPED_UNOP_DISPATCH_CASE
+}
+
+V8_INLINE void UpdateEmbeddedFeedback(Tagged<BytecodeArray> bytecode_array,
+                                      int feedback_offset,
+                                      int current_feedback) {
+  feedback_offset -= BytecodeArray::kHeaderSize - kHeapObjectTag;
+  bytecode_array->set(feedback_offset, static_cast<uint8_t>(current_feedback));
+}
+
+using GetTypedBuiltinFn = Builtin (*)(int, Builtin);
+
+V8_INLINE void TryPatchBaselineCodeImpl(Isolate* isolate, int current_feedback,
+                                        GetTypedBuiltinFn get_typed_builtin) {
+  DisallowGarbageCollection no_gc;
+  const Address entry = Isolate::c_entry_fp(isolate->thread_local_top());
+  Address* pc_address =
+      reinterpret_cast<Address*>(entry + ExitFrameConstants::kCallerPCOffset);
+  Address pc =
+      StackFrame::ReadPC(pc_address) - Assembler::kCallTargetAddressOffset;
+  Address current = Assembler::target_address_at(pc, kNullAddress);
+  // TODO(chromium:429351411): Consider using a cache.
+  Builtin current_builtin =
+      OffHeapInstructionStream::TryLookupCode(isolate, current);
+  Builtin target_builtin = get_typed_builtin(current_feedback, current_builtin);
+
+  if (target_builtin != Builtin::kNoBuiltinId) {
+    Address target = Builtins::EntryOf(target_builtin, isolate);
+    WritableJitAllocation jit_allocation =
+        WritableJitAllocation::ForPatchableBaselineJIT(
+            pc, Assembler::kCallTargetAddressOffset);
+    Assembler::set_target_address_at(pc, kNullAddress, target, &jit_allocation,
+                                     FLUSH_ICACHE_IF_NEEDED);
+  }
+}
+
+V8_INLINE void TryPatchCompareOpBaselineCode(Isolate* isolate,
+                                             int current_feedback) {
+  TryPatchBaselineCodeImpl(isolate, current_feedback,
+                           GetTypedBuiltinForCompare);
+}
+
+V8_INLINE void TryPatchBinaryOpBaselineCode(Isolate* isolate,
+                                            int current_feedback) {
+  TryPatchBaselineCodeImpl(isolate, current_feedback, GetTypedBuiltinForBinop);
+}
+
+V8_INLINE void TryPatchUnaryOpBaselineCode(Isolate* isolate,
+                                           int current_feedback) {
+  TryPatchBaselineCodeImpl(isolate, current_feedback, GetTypedBuiltinForUnary);
+}
+
+V8_INLINE int UpdateEmbeddedFeedbackAndGetCurrent(RuntimeArguments args) {
+  int current_feedback = args.smi_value_at(0);
+  DCHECK_LE(current_feedback, std::numeric_limits<uint8_t>::max());
+  DCHECK_GE(current_feedback, 0);
+  UpdateEmbeddedFeedback(TrustedCast<BytecodeArray>(args[2]),
+                         static_cast<int>(args.number_value_at(3)),
+                         current_feedback);
+  return current_feedback;
+}
+#endif  // V8_ENABLE_SPARKPLUG_PLUS
 }  // namespace
 
 RUNTIME_FUNCTION(Runtime_CompileLazy) {
@@ -127,7 +297,7 @@ namespace {
 void CompileOptimized(DirectHandle<JSFunction> function, ConcurrencyMode mode,
                       CodeKind target_kind, Isolate* isolate) {
   // Ensure that the tiering request is reset even if compilation fails.
-  function->ResetTieringRequests();
+  function->ResetTieringRequests(isolate);
 
   // As a pre- and post-condition of CompileOptimized, the function *must* be
   // compiled, i.e. the installed InstructionStream object must not be
@@ -206,7 +376,7 @@ RUNTIME_FUNCTION(Runtime_OptimizeTurbofanEager) {
   return ReadOnlyRoots(isolate).undefined_value();
 }
 
-RUNTIME_FUNCTION(Runtime_MarkLazyDeoptimized) {
+RUNTIME_FUNCTION(Runtime_MarkLazyDeoptimizedOrFlushed) {
   HandleScope scope(isolate);
   DCHECK_EQ(2, args.length());
   DirectHandle<JSFunction> function = args.at<JSFunction>(0);
@@ -227,14 +397,16 @@ RUNTIME_FUNCTION(Runtime_MarkLazyDeoptimized) {
     reoptimize = false;
   }
 
-  function->ResetTieringRequests();
-  if (reoptimize) {
-    // Set the budget such that we have one invocation which allows us to detect
-    // if any ICs need updating before re-optimization.
-    function->raw_feedback_cell()->set_interrupt_budget(1);
-  } else {
-    function->SetInterruptBudget(isolate, BudgetModification::kRaise,
-                                 CodeKind::INTERPRETED_FUNCTION);
+  if (!function->code(isolate)->marked_for_deoptimization()) {
+    function->ResetTieringRequests(isolate);
+    if (reoptimize) {
+      // Set the budget such that we have one invocation which allows us to
+      // detect if any ICs need updating before re-optimization.
+      function->raw_feedback_cell()->set_interrupt_budget(1);
+    } else {
+      function->SetInterruptBudget(isolate, BudgetModification::kReset,
+                                   CodeKind::INTERPRETED_FUNCTION);
+    }
   }
   return ReadOnlyRoots(isolate).undefined_value();
 }
@@ -246,64 +418,6 @@ RUNTIME_FUNCTION(Runtime_FunctionLogNextExecution) {
   DCHECK(v8_flags.log_function_events);
   LogExecution(isolate, js_function);
   return js_function->code(isolate);
-}
-
-// The enum values need to match "AsmJsInstantiateResult" in
-// tools/metrics/histograms/enums.xml.
-enum AsmJsInstantiateResult {
-  kAsmJsInstantiateSuccess = 0,
-  kAsmJsInstantiateFail = 1,
-};
-
-RUNTIME_FUNCTION(Runtime_InstantiateAsmJs) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(args.length(), 4);
-  DirectHandle<JSFunction> function = args.at<JSFunction>(0);
-
-  DirectHandle<JSReceiver> stdlib;
-  if (IsJSReceiver(args[1])) {
-    stdlib = args.at<JSReceiver>(1);
-  }
-  DirectHandle<JSReceiver> foreign;
-  if (IsJSReceiver(args[2])) {
-    foreign = args.at<JSReceiver>(2);
-  }
-  DirectHandle<JSArrayBuffer> memory;
-  if (IsJSArrayBuffer(args[3])) {
-    memory = args.at<JSArrayBuffer>(3);
-  }
-  DirectHandle<SharedFunctionInfo> shared(function->shared(), isolate);
-#if V8_ENABLE_WEBASSEMBLY
-  if (shared->HasAsmWasmData()) {
-    DirectHandle<AsmWasmData> data(shared->asm_wasm_data(), isolate);
-    MaybeDirectHandle<Object> result = AsmJs::InstantiateAsmWasm(
-        isolate, shared, data, stdlib, foreign, memory);
-    if (!result.is_null()) {
-      isolate->counters()->asmjs_instantiate_result()->AddSample(
-          kAsmJsInstantiateSuccess);
-      return *result.ToHandleChecked();
-    }
-    if (isolate->has_exception()) {
-      // If instantiation fails, we do not propagate the exception but instead
-      // fall back to JS execution. The only exception (to that rule) is the
-      // termination exception.
-      DCHECK(isolate->is_execution_terminating());
-      return ReadOnlyRoots{isolate}.exception();
-    }
-    isolate->counters()->asmjs_instantiate_result()->AddSample(
-        kAsmJsInstantiateFail);
-
-    // Remove wasm data, mark as broken for asm->wasm, replace AsmWasmData on
-    // the SFI with UncompiledData and set entrypoint to CompileLazy builtin,
-    // and return a smi 0 to indicate failure.
-    SharedFunctionInfo::DiscardCompiled(isolate, shared);
-  }
-  shared->set_is_asm_wasm_broken(true);
-#endif
-  DCHECK_EQ(function->code(isolate), *BUILTIN_CODE(isolate, InstantiateAsmJs));
-  function->UpdateCode(isolate, *BUILTIN_CODE(isolate, CompileLazy));
-  DCHECK(!isolate->has_exception());
-  return Smi::zero();
 }
 
 namespace {
@@ -440,6 +554,26 @@ Tagged<Object> CompileOptimizedOSR(Isolate* isolate,
 
 }  // namespace
 
+#ifdef V8_DUMPLING
+RUNTIME_FUNCTION(Runtime_PrintDumpedFrame) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(args.length(), 1);
+  CHECK(isolate->context().is_null());
+
+  DCHECK(!AllowGarbageCollection::IsAllowed());
+
+  Deoptimizer* dumper = isolate->GetAndClearCurrentDeoptimizer();
+
+  Tagged<Context> saved_context = isolate->context();
+  isolate->set_context(dumper->function()->native_context());
+  dumper->VirtualMaterializeAndPrint();
+  delete dumper;
+
+  isolate->set_context(saved_context);
+  return ReadOnlyRoots(isolate).undefined_value();
+}
+#endif  // V8_DUMPLING
+
 RUNTIME_FUNCTION(Runtime_NotifyDeoptimized) {
   HandleScope scope(isolate);
   DCHECK_EQ(0, args.length());
@@ -449,7 +583,7 @@ RUNTIME_FUNCTION(Runtime_NotifyDeoptimized) {
   DCHECK(isolate->context().is_null());
 
   TimerEventScope<TimerEventDeoptimizeCode> timer(isolate);
-  TRACE_EVENT0("v8", "V8.DeoptimizeCode");
+  TRACE_EVENT("v8", "V8.DeoptimizeCode");
   DirectHandle<JSFunction> function = deoptimizer->function();
   // For OSR the optimized code isn't installed on the function, so get the
   // code object from deoptimizer.
@@ -457,6 +591,7 @@ RUNTIME_FUNCTION(Runtime_NotifyDeoptimized) {
   const DeoptimizeKind deopt_kind = deoptimizer->deopt_kind();
   const DeoptimizeReason deopt_reason =
       deoptimizer->GetDeoptInfo().deopt_reason;
+  const Deoptimizer::CodeValidity code_validity = deoptimizer->code_validity();
 
   // TODO(turbofan): We currently need the native context to materialize
   // the arguments object, but only to get to its map.
@@ -474,47 +609,48 @@ RUNTIME_FUNCTION(Runtime_NotifyDeoptimized) {
   JavaScriptFrame* top_frame = top_it.frame();
   isolate->set_context(Cast<Context>(top_frame->context()));
 
-  // Lazy deopts don't invalidate the underlying optimized code since the code
-  // object itself is still valid (as far as we know); the called function
-  // caused the deopt, not the function we're currently looking at.
   if (deopt_kind == DeoptimizeKind::kLazy) {
+    DCHECK_EQ(code_validity, Deoptimizer::CodeValidity::kUnaffected);
     return ReadOnlyRoots(isolate).undefined_value();
   }
 
-  // If there's a turbolevved inner OSR loop and a maglevved outer OSR loop,
-  // force the outer loop to be turbolevved.
-  //
-  // Otherwise we're stuck in a state where the outer loop is maglevved and the
-  // inner loop is turbolevved, and we deopt the inner loop at every outer loop
-  // backedge.
   const BytecodeOffset osr_offset = optimized_code->osr_offset();
-  BytecodeOffset outer_loop_osr_offset = BytecodeOffset::None();
-  if (v8_flags.turbolev && deopt_reason == DeoptimizeReason::kOSREarlyExit) {
-    CHECK_GT(deopt_exit_offset.ToInt(), osr_offset.ToInt());
-    if (optimized_code->kind() == CodeKind::TURBOFAN_JS &&
-        Deoptimizer::GetOutermostOuterLoopWithCodeKind(
-            isolate, *function, osr_offset, CodeKind::MAGLEV,
-            &outer_loop_osr_offset)) {
-      auto result =
-          CompileOptimizedOSR(isolate, handle(*function, isolate),
-                              CodeKind::TURBOFAN_JS, outer_loop_osr_offset);
-      USE(result);
-      return ReadOnlyRoots(isolate).undefined_value();
-    }
-  }
 
-  // Some eager deopts also don't invalidate InstructionStream (e.g. when
+  // Some deopts don't invalidate InstructionStream (e.g. lazy deopts, or when
   // preparing for OSR from Maglev to Turbofan).
-  if (IsDeoptimizationWithoutCodeInvalidation(deopt_reason)) {
+  if (code_validity == Deoptimizer::CodeValidity::kUnaffected) {
+    // If there's a turbolevved inner OSR loop and a maglevved outer OSR loop,
+    // force the outer loop to be turbolevved.
+    //
+    // Otherwise we're stuck in a state where the outer loop is maglevved and
+    // the inner loop is turbolevved, and we deopt the inner loop at every outer
+    // loop backedge.
+    BytecodeOffset outer_loop_osr_offset = BytecodeOffset::None();
+    if (v8_flags.turbolev && deopt_reason == DeoptimizeReason::kOSREarlyExit) {
+      CHECK_GT(deopt_exit_offset.ToInt(), osr_offset.ToInt());
+      if (optimized_code->kind() == CodeKind::TURBOFAN_JS &&
+          Deoptimizer::GetOutermostOuterLoopWithCodeKind(
+              isolate, *function, osr_offset, CodeKind::MAGLEV,
+              &outer_loop_osr_offset)) {
+        auto result =
+            CompileOptimizedOSR(isolate, handle(*function, isolate),
+                                CodeKind::TURBOFAN_JS, outer_loop_osr_offset);
+        USE(result);
+      }
+    }
+
+    // Expedite tiering of the main function if we tier in OSR.
     if (deopt_reason == DeoptimizeReason::kPrepareForOnStackReplacement &&
         function->ActiveTierIsMaglev(isolate)) {
       isolate->tiering_manager()->MarkForTurboFanOptimization(*function);
     }
+
     return ReadOnlyRoots(isolate).undefined_value();
   }
 
-  DCHECK_NE(deopt_reason, DeoptimizeReason::kOSREarlyExit);
-  DCHECK_NE(deopt_reason, DeoptimizeReason::kPrepareForOnStackReplacement);
+  USE(deopt_kind);
+  DCHECK_EQ(deopt_kind, DeoptimizeKind::kEager);
+  DCHECK(!IsDeoptimizationWithoutCodeInvalidation(deopt_reason));
 
   // Non-OSR'd code is deoptimized unconditionally. If the deoptimization occurs
   // inside the outermost loop containing a loop that can trigger OSR
@@ -530,15 +666,10 @@ RUNTIME_FUNCTION(Runtime_NotifyDeoptimized) {
 
   bool any_marked = false;
 
-  if (osr_offset.IsNone() || Deoptimizer::DeoptExitIsInsideOsrLoop(
-                                 isolate, *function, deopt_exit_offset,
-                                 osr_offset, optimized_code->kind())) {
-    function->ResetTieringRequests();
-    if (!optimized_code->marked_for_deoptimization()) {
-      optimized_code->SetMarkedForDeoptimization(
-          isolate, LazyDeoptimizeReason::kEagerDeopt);
-      any_marked = true;
-    }
+  if (!optimized_code->marked_for_deoptimization()) {
+    optimized_code->SetMarkedForDeoptimization(
+        isolate, LazyDeoptimizeReason::kEagerDeopt);
+    any_marked = true;
   }
 
   if (osr_offset.IsNone()) {
@@ -593,7 +724,6 @@ RUNTIME_FUNCTION(Runtime_CompileOptimizedOSR) {
 }
 
 namespace {
-
 Tagged<Object> CompileOptimizedOSRFromMaglev(Isolate* isolate,
                                              DirectHandle<JSFunction> function,
                                              BytecodeOffset osr_offset) {
@@ -635,7 +765,6 @@ Tagged<Object> CompileOptimizedOSRFromMaglev(Isolate* isolate,
   return CompileOptimizedOSR(isolate, function, CodeKind::TURBOFAN_JS,
                              osr_offset);
 }
-
 }  // namespace
 
 RUNTIME_FUNCTION(Runtime_CompileOptimizedOSRFromMaglev) {
@@ -680,7 +809,7 @@ RUNTIME_FUNCTION(Runtime_CompileOptimizedOSRFromMaglevInlined) {
 RUNTIME_FUNCTION(Runtime_LogOrTraceOptimizedOSREntry) {
   HandleScope handle_scope(isolate);
   DCHECK_EQ(0, args.length());
-  CHECK(v8_flags.trace_osr || v8_flags.log_function_events);
+  CHECK(v8_flags.log_or_trace_osr);
 
   BytecodeOffset osr_offset = BytecodeOffset::None();
   Handle<JSFunction> function;
@@ -725,7 +854,7 @@ static Tagged<Object> CompileGlobalEval(
   static const ParseRestriction restriction = NO_PARSE_RESTRICTION;
   DirectHandle<JSFunction> compiled;
   DirectHandle<Context> context(isolate->context(), isolate);
-  if (!Is<NativeContext>(*context) && v8_flags.reuse_scope_infos) {
+  if (!Is<NativeContext>(*context)) {
     Tagged<WeakFixedArray> array = Cast<Script>(outer_info->script())->infos();
     Tagged<ScopeInfo> stored_info;
     CHECK(array->get(eval_scope_info_index)
@@ -761,5 +890,73 @@ RUNTIME_FUNCTION(Runtime_ResolvePossiblyDirectEval) {
                            language_mode, args.smi_value_at(4),
                            args.smi_value_at(5));
 }
+
+#ifdef V8_ENABLE_SPARKPLUG_PLUS
+RUNTIME_FUNCTION(Runtime_PatchCompareOpBaselineCode) {
+  HandleScope scope(isolate);
+  CHECK(v8_flags.sparkplug_plus);
+  DCHECK_EQ(4, args.length());
+
+  DirectHandle<Boolean> compare_result = args.at<Boolean>(1);
+  TryPatchCompareOpBaselineCode(isolate,
+                                UpdateEmbeddedFeedbackAndGetCurrent(args));
+  return *compare_result;
+}
+
+RUNTIME_FUNCTION(Runtime_PatchCompareOpBaselineCodeAndThrow) {
+  HandleScope scope(isolate);
+  CHECK(v8_flags.sparkplug_plus);
+  DCHECK_EQ(4, args.length());
+
+  DirectHandle<Object> exception = args.at<Object>(1);
+  TryPatchCompareOpBaselineCode(isolate,
+                                UpdateEmbeddedFeedbackAndGetCurrent(args));
+  return isolate->ReThrow(*exception);
+}
+
+RUNTIME_FUNCTION(Runtime_PatchBinopBaselineCode) {
+  HandleScope scope(isolate);
+  CHECK(v8_flags.sparkplug_plus);
+  DCHECK_EQ(4, args.length());
+
+  DirectHandle<Object> result = args.at<Object>(1);
+  TryPatchBinaryOpBaselineCode(isolate,
+                               UpdateEmbeddedFeedbackAndGetCurrent(args));
+  return *result;
+}
+
+RUNTIME_FUNCTION(Runtime_PatchBinopBaselineCodeAndThrow) {
+  HandleScope scope(isolate);
+  CHECK(v8_flags.sparkplug_plus);
+  DCHECK_EQ(4, args.length());
+
+  DirectHandle<Object> exception = args.at<Object>(1);
+  TryPatchBinaryOpBaselineCode(isolate,
+                               UpdateEmbeddedFeedbackAndGetCurrent(args));
+  return isolate->ReThrow(*exception);
+}
+
+RUNTIME_FUNCTION(Runtime_PatchUnaryOpBaselineCode) {
+  HandleScope scope(isolate);
+  CHECK(v8_flags.sparkplug_plus);
+  DCHECK_EQ(4, args.length());
+
+  DirectHandle<Object> result = args.at<Object>(1);
+  TryPatchUnaryOpBaselineCode(isolate,
+                              UpdateEmbeddedFeedbackAndGetCurrent(args));
+  return *result;
+}
+
+RUNTIME_FUNCTION(Runtime_PatchUnaryOpBaselineCodeAndThrow) {
+  HandleScope scope(isolate);
+  CHECK(v8_flags.sparkplug_plus);
+  DCHECK_EQ(4, args.length());
+
+  DirectHandle<Object> exception = args.at<Object>(1);
+  TryPatchUnaryOpBaselineCode(isolate,
+                              UpdateEmbeddedFeedbackAndGetCurrent(args));
+  return isolate->ReThrow(*exception);
+}
+#endif  // V8_ENABLE_SPARKPLUG_PLUS
 
 }  // namespace v8::internal

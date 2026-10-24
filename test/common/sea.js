@@ -27,7 +27,7 @@ function skipIfSingleExecutableIsNotSupported() {
   if (!['darwin', 'win32', 'linux'].includes(process.platform))
     common.skip(`Unsupported platform ${process.platform}.`);
 
-  if (process.platform === 'linux' && process.config.variables.is_debug === 1)
+  if (process.platform === 'linux' && common.isDebug)
     common.skip('Running the resultant binary fails with `Couldn\'t read target executable"`.');
 
   if (process.config.variables.node_shared)
@@ -154,7 +154,7 @@ function generateSEA(fixtureDir, options = {}) {
   } catch (e) {
     const message = `Cannot copy ${process.execPath} to ${outputFile}: ${inspect(e)}`;
     if (verifyWorkflow) {
-      throw new Error(message);
+      throw new Error(message, { cause: e });
     }
     common.skip(message);
   }
@@ -192,7 +192,7 @@ function generateSEA(fixtureDir, options = {}) {
   } catch (e) {
     const message = `Cannot inject ${seaPrepBlob} into ${outputFile}: ${inspect(e)}`;
     if (verifyWorkflow) {
-      throw new Error(message);
+      throw new Error(message, { cause: e });
     }
     common.skip(message);
   }
@@ -210,7 +210,7 @@ function signSEA(targetExecutable, verifyWorkflow = false) {
     } catch (e) {
       const message = `Cannot sign ${targetExecutable}: ${inspect(e)}`;
       if (verifyWorkflow) {
-        throw new Error(message);
+        throw new Error(message, { cause: e });
       }
       common.skip(message);
     }
@@ -221,7 +221,7 @@ function signSEA(targetExecutable, verifyWorkflow = false) {
     } catch (e) {
       const message = `Cannot find signtool: ${inspect(e)}`;
       if (verifyWorkflow) {
-        throw new Error(message);
+        throw new Error(message, { cause: e });
       }
       common.skip(message);
     }
@@ -232,7 +232,7 @@ function signSEA(targetExecutable, verifyWorkflow = false) {
     } catch (e) {
       const message = `Cannot sign ${targetExecutable}: ${inspect(e)}\n${stderr}`;
       if (verifyWorkflow) {
-        throw new Error(message);
+        throw new Error(message, { cause: e });
       }
       common.skip(message);
     }

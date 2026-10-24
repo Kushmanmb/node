@@ -4,7 +4,8 @@
 
 #include "src/api/api-inl.h"
 #include "src/objects/backing-store.h"
-#include "src/wasm/wasm-objects.h"
+#include "src/objects/js-array-buffer-inl.h"
+#include "src/wasm/wasm-objects-inl.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/heap/heap-utils.h"
 #include "test/cctest/manually-externalized-buffer.h"
@@ -21,7 +22,7 @@ TEST(Run_WasmModule_Buffer_Externalized_Detach) {
     HandleScope scope(isolate);
     MaybeHandle<JSArrayBuffer> result =
         isolate->factory()->NewJSArrayBufferAndBackingStore(
-            kWasmPageSize, InitializedFlag::kZeroInitialized);
+            kWasmPageSize, InitializedFlag{true});
     Handle<JSArrayBuffer> buffer = result.ToHandleChecked();
 
     // Embedder requests contents.
@@ -45,9 +46,10 @@ TEST(Run_WasmModule_Buffer_Externalized_Regression_UseAfterFree) {
     Isolate* isolate = CcTest::InitIsolateOnce();
     HandleScope scope(isolate);
     MaybeDirectHandle<WasmMemoryObject> result = WasmMemoryObject::New(
-        isolate, 1, 1, SharedFlag::kNotShared, wasm::AddressType::kI32);
+        isolate, 1, 1, SharedFlag{false}, wasm::AddressType::kI32);
     DirectHandle<WasmMemoryObject> memory_object = result.ToHandleChecked();
-    Handle<JSArrayBuffer> buffer(memory_object->array_buffer(), isolate);
+    DirectHandle<JSArrayBuffer> buffer =
+        WasmMemoryObject::GetArrayBuffer(isolate, memory_object);
 
     {
       // Embedder requests contents.
@@ -62,7 +64,7 @@ TEST(Run_WasmModule_Buffer_Externalized_Regression_UseAfterFree) {
 
     // Make sure the memory object has a new buffer that can be written to.
     uint32_t* int_buffer = reinterpret_cast<uint32_t*>(
-        memory_object->array_buffer()->backing_store());
+        memory_object->backing_store()->buffer_start());
     int_buffer[0] = 0;
   }
   heap::InvokeMemoryReducingMajorGCs(CcTest::heap());
@@ -74,7 +76,7 @@ TEST(BackingStore_Reclaim) {
   Isolate* isolate = CcTest::InitIsolateOnce();
   for (int i = 0; i < 256; ++i) {
     auto backing_store = BackingStore::AllocateWasmMemory(
-        isolate, 1, 1, WasmMemoryFlag::kWasmMemory32, SharedFlag::kNotShared);
+        isolate, 1, 1, WasmMemoryFlag::kWasmMemory32, SharedFlag{false});
     CHECK(backing_store);
   }
 }

@@ -4,7 +4,7 @@
 
 #ifndef V8_COMPILER_BACKEND_RISCV_REGISTER_CONSTRAINTS_RISCV_H_
 #define V8_COMPILER_BACKEND_RISCV_REGISTER_CONSTRAINTS_RISCV_H_
-
+#include "src/compiler/backend/instruction-codes.h"
 namespace v8 {
 namespace internal {
 namespace compiler {
@@ -17,8 +17,8 @@ enum class RiscvRegisterConstraint {
   // Input 0 and 1 are a register group. That is, input 0 is in an even-numbered
   // register and input 1 is in the next odd-numbered register.
   kRegisterGroup,
-  // Input 0 and 1 are at even register indices and are not the same register.
-  kEvenRegisters01,
+  // Input 2 does not overlap with any temp or output register.
+  kNoInput2Overlap,
   // Same as kRegisterGroup, but the group and the destination register must not
   // overlap.
   // In theory we could split this entry into two:
@@ -28,6 +28,14 @@ enum class RiscvRegisterConstraint {
   //   same as input 1, but not input 0.
   kRegisterGroupNoOverlap,
 };
+
+using RiscvRegisterConstraintField =
+    AccessModeField::Next<RiscvRegisterConstraint, 3>;
+
+static_assert(MiscField::kSize == 9);
+static_assert(LaneSizeField::kSize == 2);
+static_assert(VectorLengthField::kSize == 2);
+static_assert(AccessModeField::kSize == 1);
 
 }  // namespace compiler
 }  // namespace internal

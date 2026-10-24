@@ -95,10 +95,6 @@ class BytecodeHandlerReducer : public Next {
 
   void DispatchToBytecode(V<WordPtr> target_bytecode,
                           V<WordPtr> new_bytecode_offset) {
-#ifdef V8_IGNITION_DISPATCH_COUNTING
-    TraceBytecodeDispatch(target_bytecode);
-#endif
-
     static_assert(kSystemPointerSizeLog2 ==
                   MemoryRepresentation::UintPtr().SizeInBytesLog2());
     V<WordPtr> target_code_entry =
@@ -123,9 +119,9 @@ class BytecodeHandlerReducer : public Next {
     DCHECK_EQ(descriptor.GetParameterCount(), sizeof...(Args));
     auto call_descriptor = compiler::Linkage::GetBytecodeDispatchCallDescriptor(
         graph_zone_, descriptor, descriptor.GetStackParameterCount());
-    auto ts_call_descriptor =
-        TSCallDescriptor::Create(call_descriptor, compiler::CanThrow::kNo,
-                                 compiler::LazyDeoptOnThrow::kNo, graph_zone_);
+    auto ts_call_descriptor = TSCallDescriptor::Create(
+        call_descriptor, compiler::CanThrow{false},
+        compiler::LazyDeoptOnThrow{false}, graph_zone_);
 
     std::initializer_list<const OpIndex> arguments{args...};
     __ TailCall(target, base::VectorOf(arguments), ts_call_descriptor);
@@ -223,8 +219,8 @@ class BytecodeHandlerReducer : public Next {
     return V<BytecodeArray>::Cast(bytecode_array_);
   }
 
-  V<Word32> BytecodeOperandIdxInt32(int operand_index) {
-    DCHECK_EQ(OperandType::kIdx,
+  V<Word32> BytecodeOperandFeedbackSlotInt32(int operand_index) {
+    DCHECK_EQ(OperandType::kFeedbackSlot,
               Bytecodes::GetOperandType(data_.bytecode, operand_index));
     OperandSize operand_size = Bytecodes::GetOperandSize(
         data_.bytecode, operand_index, operand_scale());
@@ -293,13 +289,13 @@ class BytecodeHandlerReducer : public Next {
 
 template <template <typename> typename Reducer>
 class TurboshaftBytecodeHandlerAssembler
-    : public compiler::turboshaft::TSAssembler<
+    : public compiler::turboshaft::Assembler<
           Reducer, BytecodeHandlerReducer, BuiltinsReducer,
           FeedbackCollectorReducer,
           compiler::turboshaft::MachineLoweringReducer,
           compiler::turboshaft::VariableReducer> {
  public:
-  using Base = compiler::turboshaft::TSAssembler<
+  using Base = compiler::turboshaft::Assembler<
       Reducer, BytecodeHandlerReducer, BuiltinsReducer,
       FeedbackCollectorReducer, compiler::turboshaft::MachineLoweringReducer,
       compiler::turboshaft::VariableReducer>;
@@ -334,10 +330,10 @@ IGNITION_HANDLER_TS(BitwiseNot, NumberBuiltinsBytecodeHandlerAssembler) {
   V<Object> value = GetAccumulator();
   V<Context> context = GetContext();
 
-  constexpr int kSlotIndex = 0;
-  SetFeedbackSlot(
-      __ ChangeUint32ToUintPtr(__ BytecodeOperandIdxInt32(kSlotIndex)));
-  LoadFeedbackVectorOrUndefinedIfJitless();
+  SetEmbeddedFeedback(
+      BytecodeArrayTaggedPointer(),
+      __ WordPtrAdd(BytecodeOffset(),
+                    OperandOffset(kUnaryEmbeddedFeedbackOperandIndex)));
 
   V<Object> result = BitwiseNot(context, value);
   SetAccumulator(result);

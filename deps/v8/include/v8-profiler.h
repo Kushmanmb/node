@@ -48,6 +48,21 @@ template class V8_EXPORT std::vector<v8::CpuProfileDeoptFrame>;
 
 namespace v8 {
 
+/**
+ * Identifies which component initiated CPU profiling for proper attribution.
+ */
+enum class CpuProfileSource : uint8_t {
+  /** Default value when no explicit source is specified. */
+  kUnspecified = 0,
+  /** Profiling initiated via the DevTools Inspector protocol. */
+  kInspector = 1,
+  /** Profiling initiated by the embedder (e.g., Blink) via self-profiling API.
+   */
+  kSelfProfiling = 2,
+  /** Profiling initiated internally by V8 (e.g., tracing CPU profiler). */
+  kInternal = 3,
+};
+
 struct V8_EXPORT CpuProfileDeoptInfo {
   /** A pointer to a static string owned by v8. */
   const char* deopt_reason;
@@ -378,11 +393,13 @@ class V8_EXPORT CpuProfilingOptions {
    *                             the profiler's sampling interval.
    * \param filter_context If specified, profiles will only contain frames
    *                       using this context. Other frames will be elided.
+   * \param profile_source Identifies the source of this CPU profile.
    */
   CpuProfilingOptions(
       CpuProfilingMode mode = kLeafNodeLineNumbers,
       unsigned max_samples = kNoSampleLimit, int sampling_interval_us = 0,
-      MaybeLocal<Context> filter_context = MaybeLocal<Context>());
+      MaybeLocal<Context> filter_context = MaybeLocal<Context>(),
+      CpuProfileSource profile_source = CpuProfileSource::kUnspecified);
 
   CpuProfilingOptions(CpuProfilingOptions&&) = default;
   CpuProfilingOptions& operator=(CpuProfilingOptions&&) = default;
@@ -390,6 +407,7 @@ class V8_EXPORT CpuProfilingOptions {
   CpuProfilingMode mode() const { return mode_; }
   unsigned max_samples() const { return max_samples_; }
   int sampling_interval_us() const { return sampling_interval_us_; }
+  CpuProfileSource profile_source() const { return profile_source_; }
 
  private:
   friend class internal::CpuProfile;
@@ -401,6 +419,7 @@ class V8_EXPORT CpuProfilingOptions {
   unsigned max_samples_;
   int sampling_interval_us_;
   Global<Context> filter_context_;
+  CpuProfileSource profile_source_;
 };
 
 /**
@@ -811,6 +830,17 @@ class V8_EXPORT AllocationProfile {
      * what samples were added or removed between two snapshots.
      */
     uint64_t sample_id;
+
+    /**
+     * Indicates whether the sampled allocation is still live or has already
+     * been collected by GC.
+     */
+    bool is_live;
+
+    /**
+     * Sample interval in bytes used when this sample was selected.
+     */
+    uint64_t sample_interval;
   };
 
   /**
@@ -945,6 +975,18 @@ class V8_EXPORT EmbedderGraph {
   virtual void AddEdge(Node* from, Node* to, const char* name = nullptr) = 0;
 
   /**
+   * Adds an edge that represents a weak reference from the given
+   * node |from| to the given node |to|. The nodes must be added to the graph
+   * before calling this function.
+   *
+   * If name is nullptr, the edge will have auto-increment indexes, otherwise
+   * it will be named accordingly.
+   */
+  virtual void AddWeakEdge(Node* from, Node* to, const char* name = nullptr) {
+    AddEdge(from, to, name);
+  }
+
+  /**
    * Adds a count of bytes that are not associated with any particular Node.
    * An embedder may use this to represent the size of nodes which were omitted
    * from this EmbedderGraph despite being retained by the graph, or other
@@ -1044,7 +1086,8 @@ class V8_EXPORT HeapProfiler {
    *
    * This interface will soon be deprecated in favour of ContextNameResolver.
    */
-  class ObjectNameResolver {
+  class V8_DEPRECATE_SOON("Use ContextNameResolver instead.")
+      ObjectNameResolver {
    public:
     /**
      * Returns name to be used in the heap snapshot for given node. Returned
@@ -1102,24 +1145,13 @@ class V8_EXPORT HeapProfiler {
     // NOLINTNEXTLINE
     HeapSnapshotOptions() {}
 
-    // TODO(https://crbug.com/333672197): remove once ObjectNameResolver is
-    // removed.
-    ALLOW_COPY_AND_MOVE_WITH_DEPRECATED_FIELDS(HeapSnapshotOptions)
-
     /**
      * The control used to report intermediate progress to.
      */
     ActivityControl* control = nullptr;
     /**
-     * The resolver used by the snapshot generator to get names for V8 objects.
-     */
-    V8_DEPRECATE_SOON("Use context_name_resolver callback instead.")
-    ObjectNameResolver* global_object_name_resolver = nullptr;
-    /**
      * The resolver used by the snapshot generator to get names for v8::Context
      * objects.
-     * In case both this and |global_object_name_resolver| callbacks are
-     * provided, this one will be used.
      */
     ContextNameResolver* context_name_resolver = nullptr;
     /**
@@ -1151,18 +1183,8 @@ class V8_EXPORT HeapProfiler {
    *
    * \returns the snapshot.
    */
-  V8_DEPRECATE_SOON("Use overload with ContextNameResolver* resolver instead.")
-  const HeapSnapshot* TakeHeapSnapshot(
-      ActivityControl* control, ObjectNameResolver* global_object_name_resolver,
-      bool hide_internals = true, bool capture_numeric_value = false);
   const HeapSnapshot* TakeHeapSnapshot(ActivityControl* control,
-                                       ContextNameResolver* resolver,
-                                       bool hide_internals = true,
-                                       bool capture_numeric_value = false);
-  // TODO(333672197): remove this version once ObjectNameResolver* overload
-  // is removed.
-  const HeapSnapshot* TakeHeapSnapshot(ActivityControl* control,
-                                       std::nullptr_t resolver = nullptr,
+                                       ContextNameResolver* resolver = nullptr,
                                        bool hide_internals = true,
                                        bool capture_numeric_value = false);
 
@@ -1239,6 +1261,22 @@ class V8_EXPORT HeapProfiler {
    * Stops the sampling heap profile and discards the current profile.
    */
   void StopSamplingHeapProfiler();
+
+  /**
+   * Updates the sampling interval for a currently running sampling heap
+   * profiler. The new interval is used for future sample scheduling.
+   *
+   * No-op if the sampling heap profiler is not running.
+   */
+  void SetSamplingHeapProfilerInterval(uint64_t sample_interval);
+
+  /**
+   * Returns the currently retained allocation samples without materializing
+   * the full allocation profile tree.
+   *
+   * Returns an empty vector if the sampling heap profiler is not running.
+   */
+  std::vector<AllocationProfile::Sample> GetSamplingHeapProfilerSamples();
 
   /**
    * Returns the sampled profile of allocations allocated (and still live) since

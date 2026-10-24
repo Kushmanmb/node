@@ -32,20 +32,20 @@
 #include <ngtcp2/ngtcp2.h>
 
 /* QUIC header macros */
-#define NGTCP2_HEADER_FORM_BIT 0x80
-#define NGTCP2_FIXED_BIT_MASK 0x40
-#define NGTCP2_PKT_NUMLEN_MASK 0x03
+#define NGTCP2_HEADER_FORM_BIT 0x80U
+#define NGTCP2_FIXED_BIT_MASK 0x40U
+#define NGTCP2_PKT_NUMLEN_MASK 0x03U
 
 /* Long header specific macros */
-#define NGTCP2_LONG_TYPE_MASK 0x30
-#define NGTCP2_LONG_RESERVED_BIT_MASK 0x0c
+#define NGTCP2_LONG_TYPE_MASK 0x30U
+#define NGTCP2_LONG_RESERVED_BIT_MASK 0x0CU
 
 /* Short header specific macros */
-#define NGTCP2_SHORT_RESERVED_BIT_MASK 0x18
-#define NGTCP2_SHORT_KEY_PHASE_BIT 0x04
+#define NGTCP2_SHORT_RESERVED_BIT_MASK 0x18U
+#define NGTCP2_SHORT_KEY_PHASE_BIT 0x04U
 
 /* NGTCP2_SR_TYPE is a Type field of Stateless Reset. */
-#define NGTCP2_SR_TYPE 0x1f
+#define NGTCP2_SR_TYPE 0x1FU
 
 /* NGTCP2_MIN_LONG_HEADERLEN is the minimum length of long header.
    That is (1|1|TT|RR|PP)<1> + VERSION<4> + DCIL<1> + SCIL<1> +
@@ -53,9 +53,9 @@
 #define NGTCP2_MIN_LONG_HEADERLEN (1 + 4 + 1 + 1 + 1 + 1)
 
 /* STREAM frame specific macros */
-#define NGTCP2_STREAM_FIN_BIT 0x01
-#define NGTCP2_STREAM_LEN_BIT 0x02
-#define NGTCP2_STREAM_OFF_BIT 0x04
+#define NGTCP2_STREAM_FIN_BIT 0x01U
+#define NGTCP2_STREAM_LEN_BIT 0x02U
+#define NGTCP2_STREAM_OFF_BIT 0x04U
 
 /* NGTCP2_MIN_QUIC_PKTLEN is the minimum length of a valid QUIC
    packet. */
@@ -78,23 +78,23 @@
 
 /* NGTCP2_MAX_SERVER_STREAM_ID_BIDI is the maximum bidirectional
    server stream ID. */
-#define NGTCP2_MAX_SERVER_STREAM_ID_BIDI ((int64_t)0x3ffffffffffffffdll)
+#define NGTCP2_MAX_SERVER_STREAM_ID_BIDI ((int64_t)0x3FFFFFFFFFFFFFFDLL)
 /* NGTCP2_MAX_CLIENT_STREAM_ID_BIDI is the maximum bidirectional
    client stream ID. */
-#define NGTCP2_MAX_CLIENT_STREAM_ID_BIDI ((int64_t)0x3ffffffffffffffcll)
+#define NGTCP2_MAX_CLIENT_STREAM_ID_BIDI ((int64_t)0x3FFFFFFFFFFFFFFCLL)
 /* NGTCP2_MAX_SERVER_STREAM_ID_UNI is the maximum unidirectional
    server stream ID. */
-#define NGTCP2_MAX_SERVER_STREAM_ID_UNI ((int64_t)0x3fffffffffffffffll)
+#define NGTCP2_MAX_SERVER_STREAM_ID_UNI ((int64_t)0x3FFFFFFFFFFFFFFFLL)
 /* NGTCP2_MAX_CLIENT_STREAM_ID_UNI is the maximum unidirectional
    client stream ID. */
-#define NGTCP2_MAX_CLIENT_STREAM_ID_UNI ((int64_t)0x3ffffffffffffffell)
+#define NGTCP2_MAX_CLIENT_STREAM_ID_UNI ((int64_t)0x3FFFFFFFFFFFFFFELL)
 
 /* NGTCP2_MAX_NUM_ACK_RANGES is the maximum number of Additional ACK
    ranges which this library can create, or decode. */
 #define NGTCP2_MAX_ACK_RANGES 32
 
 /* NGTCP2_MAX_PKT_NUM is the maximum packet number. */
-#define NGTCP2_MAX_PKT_NUM ((int64_t)((1ll << 62) - 1))
+#define NGTCP2_MAX_PKT_NUM ((int64_t)((1LL << 62) - 1))
 
 /* NGTCP2_MIN_PKT_EXPANDLEN is the minimum packet size expansion to
    hide/trigger Stateless Reset. */
@@ -109,29 +109,29 @@
 
 /* NGTCP2_PKT_TYPE_INITIAL_V1 is Initial long header packet type for
    QUIC v1. */
-#define NGTCP2_PKT_TYPE_INITIAL_V1 0x0
+#define NGTCP2_PKT_TYPE_INITIAL_V1 0x0U
 /* NGTCP2_PKT_TYPE_0RTT_V1 is 0RTT long header packet type for QUIC
    v1. */
-#define NGTCP2_PKT_TYPE_0RTT_V1 0x1
+#define NGTCP2_PKT_TYPE_0RTT_V1 0x1U
 /* NGTCP2_PKT_TYPE_HANDSHAKE_V1 is Handshake long header packet type
    for QUIC v1. */
-#define NGTCP2_PKT_TYPE_HANDSHAKE_V1 0x2
+#define NGTCP2_PKT_TYPE_HANDSHAKE_V1 0x2U
 /* NGTCP2_PKT_TYPE_RETRY_V1 is Retry long header packet type for QUIC
    v1. */
-#define NGTCP2_PKT_TYPE_RETRY_V1 0x3
+#define NGTCP2_PKT_TYPE_RETRY_V1 0x3U
 
 /* NGTCP2_PKT_TYPE_INITIAL_V2 is Initial long header packet type for
    QUIC v2. */
-#define NGTCP2_PKT_TYPE_INITIAL_V2 0x1
+#define NGTCP2_PKT_TYPE_INITIAL_V2 0x1U
 /* NGTCP2_PKT_TYPE_0RTT_V2 is 0RTT long header packet type for QUIC
    v2. */
-#define NGTCP2_PKT_TYPE_0RTT_V2 0x2
+#define NGTCP2_PKT_TYPE_0RTT_V2 0x2U
 /* NGTCP2_PKT_TYPE_HANDSHAKE_V2 is Handshake long header packet type
    for QUIC v2. */
-#define NGTCP2_PKT_TYPE_HANDSHAKE_V2 0x3
+#define NGTCP2_PKT_TYPE_HANDSHAKE_V2 0x3U
 /* NGTCP2_PKT_TYPE_RETRY_V2 is Retry long header packet type for QUIC
    v2. */
-#define NGTCP2_PKT_TYPE_RETRY_V2 0x0
+#define NGTCP2_PKT_TYPE_RETRY_V2 0x0U
 
 /* NGTCP2_MIN_STREAM_DATALEN is the minimum length of STREAM frame to
    avoid too small frame.  It is not always enforced for various
@@ -153,32 +153,32 @@ typedef struct ngtcp2_pkt_retry {
   uint8_t tag[NGTCP2_RETRY_TAGLEN];
 } ngtcp2_pkt_retry;
 
-#define NGTCP2_FRAME_PADDING 0x00
-#define NGTCP2_FRAME_PING 0x01
-#define NGTCP2_FRAME_ACK 0x02
-#define NGTCP2_FRAME_ACK_ECN 0x03
-#define NGTCP2_FRAME_RESET_STREAM 0x04
-#define NGTCP2_FRAME_STOP_SENDING 0x05
-#define NGTCP2_FRAME_CRYPTO 0x06
-#define NGTCP2_FRAME_NEW_TOKEN 0x07
-#define NGTCP2_FRAME_STREAM 0x08
-#define NGTCP2_FRAME_MAX_DATA 0x10
-#define NGTCP2_FRAME_MAX_STREAM_DATA 0x11
-#define NGTCP2_FRAME_MAX_STREAMS_BIDI 0x12
-#define NGTCP2_FRAME_MAX_STREAMS_UNI 0x13
-#define NGTCP2_FRAME_DATA_BLOCKED 0x14
-#define NGTCP2_FRAME_STREAM_DATA_BLOCKED 0x15
-#define NGTCP2_FRAME_STREAMS_BLOCKED_BIDI 0x16
-#define NGTCP2_FRAME_STREAMS_BLOCKED_UNI 0x17
-#define NGTCP2_FRAME_NEW_CONNECTION_ID 0x18
-#define NGTCP2_FRAME_RETIRE_CONNECTION_ID 0x19
-#define NGTCP2_FRAME_PATH_CHALLENGE 0x1a
-#define NGTCP2_FRAME_PATH_RESPONSE 0x1b
-#define NGTCP2_FRAME_CONNECTION_CLOSE 0x1c
-#define NGTCP2_FRAME_CONNECTION_CLOSE_APP 0x1d
-#define NGTCP2_FRAME_HANDSHAKE_DONE 0x1e
-#define NGTCP2_FRAME_DATAGRAM 0x30
-#define NGTCP2_FRAME_DATAGRAM_LEN 0x31
+#define NGTCP2_FRAME_PADDING 0x00U
+#define NGTCP2_FRAME_PING 0x01U
+#define NGTCP2_FRAME_ACK 0x02U
+#define NGTCP2_FRAME_ACK_ECN 0x03U
+#define NGTCP2_FRAME_RESET_STREAM 0x04U
+#define NGTCP2_FRAME_STOP_SENDING 0x05U
+#define NGTCP2_FRAME_CRYPTO 0x06U
+#define NGTCP2_FRAME_NEW_TOKEN 0x07U
+#define NGTCP2_FRAME_STREAM 0x08U
+#define NGTCP2_FRAME_MAX_DATA 0x10U
+#define NGTCP2_FRAME_MAX_STREAM_DATA 0x11U
+#define NGTCP2_FRAME_MAX_STREAMS_BIDI 0x12U
+#define NGTCP2_FRAME_MAX_STREAMS_UNI 0x13U
+#define NGTCP2_FRAME_DATA_BLOCKED 0x14U
+#define NGTCP2_FRAME_STREAM_DATA_BLOCKED 0x15U
+#define NGTCP2_FRAME_STREAMS_BLOCKED_BIDI 0x16U
+#define NGTCP2_FRAME_STREAMS_BLOCKED_UNI 0x17U
+#define NGTCP2_FRAME_NEW_CONNECTION_ID 0x18U
+#define NGTCP2_FRAME_RETIRE_CONNECTION_ID 0x19U
+#define NGTCP2_FRAME_PATH_CHALLENGE 0x1AU
+#define NGTCP2_FRAME_PATH_RESPONSE 0x1BU
+#define NGTCP2_FRAME_CONNECTION_CLOSE 0x1CU
+#define NGTCP2_FRAME_CONNECTION_CLOSE_APP 0x1DU
+#define NGTCP2_FRAME_HANDSHAKE_DONE 0x1EU
+#define NGTCP2_FRAME_DATAGRAM 0x30U
+#define NGTCP2_FRAME_DATAGRAM_LEN 0x31U
 
 typedef struct ngtcp2_frame_hd {
   uint64_t type;
@@ -300,7 +300,7 @@ typedef struct ngtcp2_new_connection_id {
   uint64_t seq;
   uint64_t retire_prior_to;
   ngtcp2_cid cid;
-  uint8_t stateless_reset_token[NGTCP2_STATELESS_RESET_TOKENLEN];
+  ngtcp2_stateless_reset_token token;
 } ngtcp2_new_connection_id;
 
 typedef struct ngtcp2_stop_sending {
@@ -311,12 +311,12 @@ typedef struct ngtcp2_stop_sending {
 
 typedef struct ngtcp2_path_challenge {
   uint64_t type;
-  uint8_t data[NGTCP2_PATH_CHALLENGE_DATALEN];
+  ngtcp2_path_challenge_data data;
 } ngtcp2_path_challenge;
 
 typedef struct ngtcp2_path_response {
   uint64_t type;
-  uint8_t data[NGTCP2_PATH_CHALLENGE_DATALEN];
+  ngtcp2_path_challenge_data data;
 } ngtcp2_path_response;
 
 typedef struct ngtcp2_new_token {
@@ -340,13 +340,9 @@ typedef struct ngtcp2_datagram {
   uint64_t dgram_id;
   /* datacnt is the number of elements that data contains. */
   size_t datacnt;
-  /* data is a pointer to ngtcp2_vec array that stores data. */
+  /* data is a pointer to ngtcp2_vec array that stores data.  If
+     datacnt == 0, this field may be NULL.*/
   ngtcp2_vec *data;
-  /* rdata is conveniently embedded to ngtcp2_datagram, so that data
-     field can just point to the address of this field to store a
-     single vector which is the case when DATAGRAM is received from a
-     remote endpoint. */
-  ngtcp2_vec rdata[1];
 } ngtcp2_datagram;
 
 typedef union ngtcp2_frame {
@@ -457,7 +453,7 @@ ngtcp2_ssize ngtcp2_pkt_encode_hd_short(uint8_t *out, size_t outlen,
  */
 typedef struct ngtcp2_frame_decoder {
   union {
-    ngtcp2_vec stream_data;
+    ngtcp2_vec data;
     ngtcp2_ack_range ack_ranges[NGTCP2_MAX_ACK_RANGES];
   } buf;
 } ngtcp2_frame_decoder;
@@ -518,7 +514,7 @@ size_t ngtcp2_pkt_decode_version_negotiation(uint32_t *dest,
  * NGTCP2_ERR_INVALID_ARGUMENT
  *     Payloadlen is too short.
  */
-int ngtcp2_pkt_decode_stateless_reset(ngtcp2_pkt_stateless_reset *sr,
+int ngtcp2_pkt_decode_stateless_reset(ngtcp2_pkt_stateless_reset2 *sr,
                                       const uint8_t *payload,
                                       size_t payloadlen);
 
@@ -1326,5 +1322,12 @@ void ngtcp2_pkt_permutate_vec(ngtcp2_vec *data, size_t datacnt,
 size_t ngtcp2_pkt_remove_vec_partial(ngtcp2_vec *removed_data, ngtcp2_vec *data,
                                      size_t datacnt, uint64_t *offsets,
                                      ngtcp2_pcg32 *pcg, const ngtcp2_vec *part);
+
+/*
+ * ngtcp2_stateless_reset_token_eq returns nonzero if |a| and |b|
+ * share the same token.
+ */
+int ngtcp2_stateless_reset_token_eq(const ngtcp2_stateless_reset_token *a,
+                                    const ngtcp2_stateless_reset_token *b);
 
 #endif /* !defined(NGTCP2_PKT_H) */

@@ -4,6 +4,10 @@
 //
 // Flags: --allow-natives-syntax --maglev
 // Flags: --typed-array-length-loading --script-context-cells
+// Flags: --mock-arraybuffer-allocator
+
+// Using --mock-arraybuffer-allocator makes the big array buffer allocation
+// always succeed. This test doesn't access the memory, so it's fine.
 
 let scriptContextSlot = 0;
 
@@ -18,7 +22,7 @@ foo(100);
 %OptimizeMaglevOnNextCall(foo);
 foo(100);
 assertEquals(100, scriptContextSlot);
-assertTrue(isMaglevved(foo));
+assertMaglevved(foo);
 
 foo(100);
 
@@ -29,5 +33,5 @@ if (%Is64Bit()) {
   const largeLength = 8589934592;
   foo(largeLength);
   assertEquals(largeLength, scriptContextSlot);
-  assertFalse(isMaglevved(foo));
+  assertNotMaglevved(foo);
 }

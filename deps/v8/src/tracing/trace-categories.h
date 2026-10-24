@@ -6,15 +6,10 @@
 #define V8_TRACING_TRACE_CATEGORIES_H_
 
 #include "src/base/macros.h"
+#include "src/base/platform/time.h"
+#include "src/tracing/perfetto-sdk.h"
 
 #if defined(V8_USE_PERFETTO)
-
-// For now most of v8 uses legacy trace events.
-#define PERFETTO_ENABLE_LEGACY_TRACE_EVENTS 1
-
-#include "perfetto/tracing/track_event.h"
-#include "perfetto/tracing/track_event_legacy.h"
-#include "src/base/platform/time.h"
 
 // Trace category prefixes used in tests.
 PERFETTO_DEFINE_TEST_CATEGORY_PREFIXES("v8-cat", "cat", "v8.Test2");
@@ -43,6 +38,8 @@ PERFETTO_DEFINE_CATEGORIES_IN_NAMESPACE_WITH_ATTRS(
     perfetto::Category(TRACE_DISABLED_BY_DEFAULT("v8.cpu_profiler"))
         .SetTags("slow"),
     perfetto::Category(TRACE_DISABLED_BY_DEFAULT("v8.gc")).SetTags("slow"),
+    perfetto::Category(TRACE_DISABLED_BY_DEFAULT("v8.gc_extra"))
+        .SetTags("slow"),
     perfetto::Category(TRACE_DISABLED_BY_DEFAULT("v8.gc_stats"))
         .SetTags("slow"),
     perfetto::Category(TRACE_DISABLED_BY_DEFAULT("v8.inspector"))

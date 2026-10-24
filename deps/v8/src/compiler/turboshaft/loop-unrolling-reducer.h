@@ -132,6 +132,7 @@ class V8_EXPORT_PRIVATE StaticCanonicalForLoopMatcher {
   static constexpr BinOp BinopFromOverflowCheckedBinopKind(
       OverflowCheckedBinopOp::Kind kind);
   static constexpr bool BinopKindIsSupported(WordBinopOp::Kind binop_kind);
+  static constexpr bool BinopIsCommutative(BinOp op);
 
  private:
   bool MatchPhiCompareCst(OpIndex cond_idx,
@@ -201,7 +202,7 @@ class V8_EXPORT_PRIVATE LoopUnrollingAnalyzer {
 
     auto iter_count = GetIterationCount(loop_header);
     return iter_count.IsExact() &&
-           iter_count.exact_count() < kMaxLoopIterationsForFullUnrolling;
+           iter_count.exact_count() <= kMaxLoopIterationsForFullUnrolling;
   }
 
   bool ShouldPartiallyUnrollLoop(const Block* loop_header) const {
@@ -209,6 +210,11 @@ class V8_EXPORT_PRIVATE LoopUnrollingAnalyzer {
     LoopFinder::LoopInfo info = loop_finder_.GetLoopInfo(loop_header);
     return !info.has_inner_loops && !info.has_any_call &&
            info.op_count < kMaxLoopSizeForPartialUnrolling;
+  }
+
+  size_t GetLoopOpCount(const Block* loop_header) {
+    DCHECK(loop_header->IsLoop());
+    return loop_finder_.GetLoopInfo(loop_header).op_count;
   }
 
   // The returned unroll count is the total number of copies of the loop body
@@ -270,7 +276,7 @@ class V8_EXPORT_PRIVATE LoopUnrollingAnalyzer {
   // count we have seen in some huge Wasm functions in the past, e.g., function
   // #21937 of https://crbug.com/383661627 (1.7M operations, 2.7MB wire bytes).
   static constexpr size_t kMaxFunctionSizeForPartialUnrolling = 1'000'000;
-  static constexpr size_t kJSMaxLoopSizeForPartialUnrolling = 50;
+  static constexpr size_t kJSMaxLoopSizeForPartialUnrolling = 64;
   static constexpr size_t kWasmMaxLoopSizeForPartialUnrolling = 80;
   static constexpr size_t kWasmMaxUnrolledLoopSize = 240;
   static constexpr size_t kMaxLoopIterationsForFullUnrolling = 4;
@@ -332,11 +338,11 @@ class LoopStackCheckElisionReducer : public Next {
 
 #if V8_ENABLE_WEBASSEMBLY
   V<None> REDUCE_INPUT_GRAPH(WasmStackCheck)(
-      V<None> ig_idx, const WasmStackCheckOp& stack_check) {
+      V<Any> ig_idx, const WasmStackCheckOp& stack_check) {
     if (skip_next_stack_check_ &&
         stack_check.kind == WasmStackCheckOp::Kind::kLoop) {
       skip_next_stack_check_ = false;
-      return {};
+      return V<None>::Invalid();
     }
     return Next::ReduceInputGraphWasmStackCheck(ig_idx, stack_check);
   }
@@ -383,14 +389,12 @@ class LoopUnrollingReducer : public Next {
       // header (note that loop headers only have 2 predecessor, including the
       // backedge), and that isn't the backedge.
       if (ShouldSkipOptimizationStep()) goto no_change;
-      if (analyzer_.ShouldRemoveLoop(dst)) {
-        RemoveLoop(dst);
+      if (analyzer_.ShouldRemoveLoop(dst) && RemoveLoop(dst)) {
         return {};
-      } else if (analyzer_.ShouldFullyUnrollLoop(dst)) {
-        FullyUnrollLoop(dst);
+      } else if (analyzer_.ShouldFullyUnrollLoop(dst) && FullyUnrollLoop(dst)) {
         return {};
-      } else if (analyzer_.ShouldPartiallyUnrollLoop(dst)) {
-        PartiallyUnrollLoop(dst);
+      } else if (analyzer_.ShouldPartiallyUnrollLoop(dst) &&
+                 PartiallyUnrollLoop(dst)) {
         return {};
       }
     } else if ((unrolling_ == UnrollingStatus::kUnrolling) &&
@@ -444,7 +448,7 @@ class LoopUnrollingReducer : public Next {
   }
 
 #if V8_ENABLE_WEBASSEMBLY
-  V<None> REDUCE_INPUT_GRAPH(WasmStackCheck)(V<None> ig_idx,
+  V<None> REDUCE_INPUT_GRAPH(WasmStackCheck)(V<Any> ig_idx,
                                              const WasmStackCheckOp& check) {
     if (ShouldSkipOptimizationStep() || !skip_next_stack_check_) {
       return Next::ReduceInputGraphWasmStackCheck(ig_idx, check);
@@ -467,9 +471,9 @@ class LoopUnrollingReducer : public Next {
     // and would like to not emit the loop body that follows.
     kRemoveLoop,
   };
-  void RemoveLoop(const Block* header);
-  void FullyUnrollLoop(const Block* header);
-  void PartiallyUnrollLoop(const Block* header);
+  bool RemoveLoop(const Block* header);
+  bool FullyUnrollLoop(const Block* header);
+  bool PartiallyUnrollLoop(const Block* header);
   void FixLoopPhis(const Block* input_graph_loop, Block* output_graph_loop,
                    const Block* backedge_block);
   bool IsRunningBuiltinPipeline() {
@@ -502,16 +506,24 @@ class LoopUnrollingReducer : public Next {
   // {unrolling_} is true if a loop is currently being unrolled.
   UnrollingStatus unrolling_ = UnrollingStatus::kNotUnrolling;
   bool skip_next_stack_check_ = false;
+  const ZoneAbslFlatHashSet<uint32_t>& stack_checks_to_remove_ =
+      __ input_graph().stack_checks_to_remove();
 
   const Block* current_loop_header_ = nullptr;
   JSHeapBroker* broker_ = __ data() -> broker();
 };
 
 template <class Next>
-void LoopUnrollingReducer<Next>::PartiallyUnrollLoop(const Block* header) {
+bool LoopUnrollingReducer<Next>::PartiallyUnrollLoop(const Block* header) {
   TRACE("LoopUnrolling: partially unrolling loop at " << header->index().id());
   DCHECK_EQ(unrolling_, UnrollingStatus::kNotUnrolling);
   DCHECK(!skip_next_stack_check_);
+
+  if (!__ CanCreateNVariables(analyzer_.GetLoopOpCount(header))) {
+    TRACE("> Too many variables, skipping unrolling");
+    return false;
+  }
+
   unrolling_ = UnrollingStatus::kUnrolling;
 
   auto loop_body = analyzer_.GetLoopBody(header);
@@ -533,7 +545,7 @@ void LoopUnrollingReducer<Next>::PartiallyUnrollLoop(const Block* header) {
       __ CloneSubGraph(loop_body, /* keep_loop_kinds */ true);
   if (StopUnrollingIfUnreachable(output_graph_header)) {
     TRACE("> Next iteration is unreachable, stopping unrolling");
-    return;
+    return true;
   }
 
   // Emitting the subsequent folded iterations. We set `unrolling_` to
@@ -543,13 +555,16 @@ void LoopUnrollingReducer<Next>::PartiallyUnrollLoop(const Block* header) {
     // We remove the stack check of all iterations but the last one.
     TRACE("> Emitting iteration " << i);
     bool is_last_iteration = i == unroll_count - 2;
+    bool skip_stack_check =
+        !is_last_iteration ||
+        stack_checks_to_remove_.contains(header->index().id());
     ScopedModification<bool> inner_skip_stack_checks(&skip_next_stack_check_,
-                                                     !is_last_iteration);
+                                                     skip_stack_check);
 
     __ CloneSubGraph(loop_body, /* keep_loop_kinds */ false);
     if (StopUnrollingIfUnreachable(output_graph_header)) {
       TRACE("> Next iteration is unreachable, stopping unrolling");
-      return;
+      return true;
     }
   }
 
@@ -567,6 +582,7 @@ void LoopUnrollingReducer<Next>::PartiallyUnrollLoop(const Block* header) {
 
   unrolling_ = UnrollingStatus::kNotUnrolling;
   TRACE("> Finished partially unrolling loop " << header->index().id());
+  return true;
 }
 
 template <class Next>
@@ -622,10 +638,20 @@ void LoopUnrollingReducer<Next>::FixLoopPhis(const Block* input_graph_loop,
 }
 
 template <class Next>
-void LoopUnrollingReducer<Next>::RemoveLoop(const Block* header) {
+bool LoopUnrollingReducer<Next>::RemoveLoop(const Block* header) {
   TRACE("LoopUnrolling: removing loop at " << header->index().id());
   DCHECK_EQ(unrolling_, UnrollingStatus::kNotUnrolling);
   DCHECK(!skip_next_stack_check_);
+
+  if (!__ CanCreateNVariables(analyzer_.GetLoopOpCount(header))) {
+    TRACE("> Too many variables, skipping removal");
+    // TODO(dmercadier): in theory, RemoveLoop shouldn't need Variables, since
+    // it cannot be called while unrolling an outer loop, since we only unroll
+    // innermost loops. We should teach CloneAndInlineBlock that it doesn't
+    // always need to introduce Variables, and then remove this bailout.
+    return false;
+  }
+
   // When removing a loop, we still need to emit the header (since it has to
   // always be executed before the 1st iteration anyways), but by setting
   // {unrolling_} to `kRemoveLoop`, the final Branch of the loop will become a
@@ -633,14 +659,20 @@ void LoopUnrollingReducer<Next>::RemoveLoop(const Block* header) {
   unrolling_ = UnrollingStatus::kRemoveLoop;
   __ CloneAndInlineBlock(header);
   unrolling_ = UnrollingStatus::kNotUnrolling;
+  return true;
 }
 
 template <class Next>
-void LoopUnrollingReducer<Next>::FullyUnrollLoop(const Block* header) {
+bool LoopUnrollingReducer<Next>::FullyUnrollLoop(const Block* header) {
   TRACE("LoopUnrolling: fully unrolling loop at " << header->index().id());
   DCHECK_EQ(unrolling_, UnrollingStatus::kNotUnrolling);
   DCHECK(!skip_next_stack_check_);
   ScopedModification<bool> skip_stack_checks(&skip_next_stack_check_, true);
+
+  if (!__ CanCreateNVariables(analyzer_.GetLoopOpCount(header))) {
+    TRACE("> Too many variables, skipping unrolling");
+    return false;
+  }
 
   size_t iter_count = analyzer_.GetIterationCount(header).exact_count();
   TRACE("> iter_count: " << iter_count);
@@ -654,7 +686,7 @@ void LoopUnrollingReducer<Next>::FullyUnrollLoop(const Block* header) {
     __ CloneSubGraph(loop_body, /* keep_loop_kinds */ false);
     if (StopUnrollingIfUnreachable()) {
       TRACE("> Next iteration is unreachable, stopping unrolling");
-      return;
+      return true;
     }
   }
 
@@ -667,6 +699,7 @@ void LoopUnrollingReducer<Next>::FullyUnrollLoop(const Block* header) {
 
   unrolling_ = UnrollingStatus::kNotUnrolling;
   TRACE("> Finished fully unrolling loop " << header->index().id());
+  return true;
 }
 
 #undef TRACE

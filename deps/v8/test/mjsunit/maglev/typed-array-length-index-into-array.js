@@ -4,6 +4,10 @@
 //
 // Flags: --allow-natives-syntax --maglev
 // Flags: --typed-array-length-loading
+// Flags: --mock-arraybuffer-allocator
+
+// Using --mock-arraybuffer-allocator makes the big array buffer allocation
+// always succeed. This test doesn't access the memory, so it's fine.
 
 // Use a top-level HOLEY_SMI_ELEMENTS array so that the test function doesn't
 // get confused about unexpected ElementsKinds in configs which don't have
@@ -22,7 +26,7 @@ foo(100);
 %OptimizeMaglevOnNextCall(foo);
 const a1 = foo(100);
 assertEquals(1, a1[100]);
-assertTrue(isMaglevved(foo));
+assertMaglevved(foo);
 
 // If we create a large JSTypedArray (length doesn't fit in Int32), we'll deopt
 // because the large length doesn't match the existing feedback for b[a.length].
@@ -30,5 +34,5 @@ if (%Is64Bit()) {
   const largeLength = 8589934592;
   const a2 = foo(largeLength);
   assertEquals(1, a2[largeLength]);
-  assertFalse(isMaglevved(foo));
+  assertNotMaglevved(foo);
 }

@@ -8,6 +8,7 @@
 #include "src/base/platform/condition-variable.h"
 #include "src/base/platform/mutex.h"
 #include "src/base/platform/semaphore.h"
+#include "src/base/strong-alias.h"
 #include "src/codegen/assembler-inl.h"
 #include "src/codegen/assembler.h"
 #include "src/codegen/macro-assembler-inl.h"
@@ -34,24 +35,25 @@ namespace v8 {
 namespace internal {
 
 namespace {
-void CreateFixedArray(Heap* heap, Address start, int size) {
+void CreateFixedArray(Heap* heap, Address start, uint32_t size) {
   Tagged<HeapObject> object = HeapObject::FromAddress(start);
   object->set_map_after_allocation(heap->isolate(),
                                    ReadOnlyRoots(heap).fixed_array_map(),
                                    SKIP_WRITE_BARRIER);
   Tagged<FixedArray> array = Cast<FixedArray>(object);
-  int length = (size - OFFSET_OF_DATA_START(FixedArray)) / kTaggedSize;
+  const uint32_t length =
+      (size - OFFSET_OF_DATA_START(FixedArray)) / kTaggedSize;
   array->set_length(length);
   MemsetTagged(array->RawFieldOfFirstElement(),
                ReadOnlyRoots(heap).undefined_value(), length);
 }
 
-const int kNumIterations = 2000;
-const int kSmallObjectSize = 10 * kTaggedSize;
-const int kMediumObjectSize = 8 * KB;
+const uint32_t kNumIterations = 2000;
+const uint32_t kSmallObjectSize = 10 * kTaggedSize;
+const uint32_t kMediumObjectSize = 8 * KB;
 
 void AllocateSomeObjects(LocalHeap* local_heap) {
-  for (int i = 0; i < kNumIterations; i++) {
+  for (uint32_t i = 0; i < kNumIterations; i++) {
     AllocationResult result = local_heap->AllocateRaw(
         kSmallObjectSize, AllocationType::kOld, AllocationOrigin::kRuntime,
         AllocationAlignment::kTaggedAligned);
@@ -94,7 +96,7 @@ class ConcurrentAllocationThread final : public v8::base::Thread {
 
 UNINITIALIZED_TEST(ConcurrentAllocationInOldSpace) {
   v8_flags.detect_ineffective_gcs_near_heap_limit = false;
-  v8_flags.max_old_space_size = 32;
+  v8_flags.max_old_space_size = 64;
   v8_flags.stress_concurrent_allocation = false;
 
   v8::Isolate::CreateParams create_params;
@@ -271,7 +273,7 @@ class LargeObjectConcurrentAllocationThread final : public v8::base::Thread {
     UnparkedScope unparked_scope(&local_heap);
     const size_t kLargeObjectSize = kMaxRegularHeapObjectSize * 2;
 
-    for (int i = 0; i < kNumIterations; i++) {
+    for (uint32_t i = 0; i < kNumIterations; i++) {
       AllocationResult result = local_heap.AllocateRaw(
           kLargeObjectSize, AllocationType::kOld, AllocationOrigin::kRuntime,
           AllocationAlignment::kTaggedAligned);
@@ -326,7 +328,7 @@ UNINITIALIZED_TEST(ConcurrentAllocationInLargeSpace) {
   isolate->Dispose();
 }
 
-const int kWhiteIterations = 1000;
+const uint32_t kWhiteIterations = 1000;
 
 class ConcurrentBlackAllocationThread final : public v8::base::Thread {
  public:
@@ -343,7 +345,7 @@ class ConcurrentBlackAllocationThread final : public v8::base::Thread {
     LocalHeap local_heap(heap_, ThreadKind::kBackground);
     UnparkedScope unparked_scope(&local_heap);
 
-    for (int i = 0; i < kNumIterations; i++) {
+    for (uint32_t i = 0; i < kNumIterations; i++) {
       if (i == kWhiteIterations) {
         local_heap.ExecuteWhileParked([this]() {
           sema_white_->Signal();
@@ -395,21 +397,18 @@ UNINITIALIZED_TEST(ConcurrentBlackAllocation) {
 
     thread->Join();
 
-    const int kObjectsAllocatedPerIteration = 2;
+    const uint32_t kObjectsAllocatedPerIteration = 2;
 
-    for (int i = 0; i < kNumIterations * kObjectsAllocatedPerIteration; i++) {
+    for (uint32_t i = 0; i < kNumIterations * kObjectsAllocatedPerIteration;
+         i++) {
       Address address = objects[i];
       Tagged<HeapObject> object = HeapObject::FromAddress(address);
       if (v8_flags.black_allocated_pages) {
         CHECK(heap->marking_state()->IsUnmarked(object));
         if (i < kWhiteIterations * kObjectsAllocatedPerIteration) {
-          CHECK(!PageMetadata::FromHeapObject(object)
-                     ->Chunk()
-                     ->IsBlackAllocatedPage());
+          CHECK(!TrustedHeapLayout::InBlackAllocatedPage(object));
         } else {
-          CHECK(PageMetadata::FromHeapObject(object)
-                    ->Chunk()
-                    ->IsBlackAllocatedPage());
+          CHECK(TrustedHeapLayout::InBlackAllocatedPage(object));
         }
       } else {
         if (i < kWhiteIterations * kObjectsAllocatedPerIteration) {
@@ -543,7 +542,7 @@ UNINITIALIZED_TEST(ConcurrentRecordRelocSlot) {
     {
       HandleScope handle_scope(i_isolate);
       uint8_t buffer[i::Assembler::kDefaultBufferSize];
-      MacroAssembler masm(i_isolate, v8::internal::CodeObjectRequired::kYes,
+      MacroAssembler masm(i_isolate, v8::internal::CodeObjectRequired{true},
                           ExternalAssemblerBuffer(buffer, sizeof(buffer)));
 #if V8_TARGET_ARCH_ARM64
       // Arm64 requires stack alignment.
@@ -563,8 +562,7 @@ UNINITIALIZED_TEST(ConcurrentRecordRelocSlot) {
       heap::AbandonCurrentlyFreeMemory(heap->old_space());
       DirectHandle<HeapNumber> value_handle(
           i_isolate->factory()->NewHeapNumber<AllocationType::kOld>(1.1));
-      heap::ForceEvacuationCandidate(
-          PageMetadata::FromHeapObject(*value_handle));
+      heap::ForceEvacuationCandidate(NormalPage::FromHeapObject(*value_handle));
       code = *code_handle;
       value = *value_handle;
     }

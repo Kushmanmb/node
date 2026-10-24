@@ -8,19 +8,18 @@
 #include "src/objects/slots.h"
 // Include the non-inl header before the rest of the headers.
 
+#include <algorithm>
+
 #include "include/v8-internal.h"
 #include "src/base/atomic-utils.h"
 #include "src/common/globals.h"
 #include "src/common/ptr-compr-inl.h"
-#include "src/objects/compressed-slots.h"
+#include "src/objects/casting.h"
 #include "src/objects/heap-object.h"
 #include "src/objects/map.h"
-#include "src/objects/maybe-object.h"
-#include "src/objects/objects.h"
 #include "src/objects/tagged.h"
-#include "src/sandbox/cppheap-pointer-inl.h"
-#include "src/sandbox/indirect-pointer-inl.h"
 #include "src/sandbox/isolate-inl.h"
+#include "src/sandbox/trusted-pointer-table-inl.h"
 #include "src/utils/memcopy.h"
 
 namespace v8 {
@@ -312,8 +311,14 @@ uint32_t ExternalPointerSlot::GetContentAsIndexAfterDeserialization(
 }
 
 #ifdef V8_COMPRESS_POINTERS
+
 CppHeapPointerHandle CppHeapPointerSlot::Relaxed_LoadHandle() const {
   return base::AsAtomic32::Relaxed_Load(location());
+}
+
+void CppHeapPointerSlot::Release_StoreHandle(
+    CppHeapPointerHandle handle) const {
+  return base::AsAtomic32::Release_Store(location(), handle);
 }
 
 void CppHeapPointerSlot::Relaxed_StoreHandle(
@@ -321,33 +326,17 @@ void CppHeapPointerSlot::Relaxed_StoreHandle(
   return base::AsAtomic32::Relaxed_Store(location(), handle);
 }
 
-void CppHeapPointerSlot::Release_StoreHandle(
-    CppHeapPointerHandle handle) const {
-  return base::AsAtomic32::Release_Store(location(), handle);
-}
-#endif  // V8_COMPRESS_POINTERS
+#else
 
-Address CppHeapPointerSlot::try_load(IsolateForPointerCompression isolate,
-                                     CppHeapPointerTagRange tag_range) const {
-#ifdef V8_COMPRESS_POINTERS
-  const CppHeapPointerTable& table = isolate.GetCppHeapPointerTable();
-  CppHeapPointerHandle handle = Relaxed_LoadHandle();
-  return table.Get(handle, tag_range);
-#else   // !V8_COMPRESS_POINTERS
-  return static_cast<Address>(base::AsAtomicPointer::Relaxed_Load(location()));
-#endif  // !V8_COMPRESS_POINTERS
-}
-
-void CppHeapPointerSlot::store(IsolateForPointerCompression isolate,
-                               Address value, CppHeapPointerTag tag) const {
-#ifdef V8_COMPRESS_POINTERS
-  CppHeapPointerTable& table = isolate.GetCppHeapPointerTable();
-  CppHeapPointerHandle handle = Relaxed_LoadHandle();
-  table.Set(handle, value, tag);
-#else   // !V8_COMPRESS_POINTERS
+void CppHeapPointerSlot::store(Address value) const {
   base::AsAtomicPointer::Relaxed_Store(location(), value);
-#endif  // !V8_COMPRESS_POINTERS
 }
+
+Address CppHeapPointerSlot::load() const {
+  return static_cast<Address>(base::AsAtomicPointer::Relaxed_Load(location()));
+}
+
+#endif  // V8_COMPRESS_POINTERS
 
 void CppHeapPointerSlot::init() const {
 #ifdef V8_COMPRESS_POINTERS
@@ -355,6 +344,29 @@ void CppHeapPointerSlot::init() const {
 #else   // !V8_COMPRESS_POINTERS
   base::AsAtomicPointer::Release_Store(location(), kNullAddress);
 #endif  // !V8_COMPRESS_POINTERS
+}
+
+CppHeapPointerSlot::RawContent
+CppHeapPointerSlot::GetAndClearContentForSerialization(
+    const DisallowGarbageCollection& no_gc) {
+#ifdef V8_COMPRESS_POINTERS
+  CppHeapPointerHandle content = Relaxed_LoadHandle();
+  Release_StoreHandle(kNullCppHeapPointerHandle);
+#else
+  Address content = ReadMaybeUnalignedValue<Address>(address());
+  WriteMaybeUnalignedValue<Address>(address(), kNullAddress);
+#endif  // V8_COMPRESS_POINTERS
+  return content;
+}
+
+void CppHeapPointerSlot::RestoreContentAfterSerialization(
+    CppHeapPointerSlot::RawContent content,
+    const DisallowGarbageCollection& no_gc) {
+#ifdef V8_COMPRESS_POINTERS
+  Release_StoreHandle(content);
+#else
+  WriteMaybeUnalignedValue<Address>(address(), content);
+#endif  // V8_COMPRESS_POINTERS
 }
 
 Tagged<Object> IndirectPointerSlot::load(IsolateForSandbox isolate) const {
@@ -387,7 +399,7 @@ void IndirectPointerSlot::Relaxed_Store(
     Tagged<ExposedTrustedObject> value) const {
 #ifdef V8_ENABLE_SANDBOX
   IndirectPointerHandle handle = value->ReadField<IndirectPointerHandle>(
-      ExposedTrustedObject::kSelfIndirectPointerOffset);
+      offsetof(ExposedTrustedObject, self_indirect_pointer_));
   DCHECK_NE(handle, kNullIndirectPointerHandle);
   Relaxed_StoreHandle(handle);
 #else
@@ -399,7 +411,7 @@ void IndirectPointerSlot::Release_Store(
     Tagged<ExposedTrustedObject> value) const {
 #ifdef V8_ENABLE_SANDBOX
   IndirectPointerHandle handle = value->ReadField<IndirectPointerHandle>(
-      ExposedTrustedObject::kSelfIndirectPointerOffset);
+      offsetof(ExposedTrustedObject, self_indirect_pointer_));
   Release_StoreHandle(handle);
 #else
   UNREACHABLE();
@@ -436,20 +448,7 @@ Tagged<Object> IndirectPointerSlot::ResolveHandle(
   // returns Smi::zero for kNullCodePointerHandle?
   if (!handle) return Smi::zero();
 
-  // Resolve the handle. The tag implies the pointer table to use.
-  if (tag_ == kUnknownIndirectPointerTag) {
-    // In this case we have to rely on the handle marking to determine which
-    // pointer table to use.
-    if (handle & kCodePointerHandleMarker) {
-      return ResolveCodePointerHandle(handle);
-    } else {
-      return ResolveTrustedPointerHandle<allow_unpublished>(handle, isolate);
-    }
-  } else if (tag_ == kCodeIndirectPointerTag) {
-    return ResolveCodePointerHandle(handle);
-  } else {
-    return ResolveTrustedPointerHandle<allow_unpublished>(handle, isolate);
-  }
+  return ResolveIndirectPointerHandle<allow_unpublished>(handle, isolate);
 #else
   UNREACHABLE();
 #endif  // V8_ENABLE_SANDBOX
@@ -457,22 +456,15 @@ Tagged<Object> IndirectPointerSlot::ResolveHandle(
 
 #ifdef V8_ENABLE_SANDBOX
 template <IndirectPointerSlot::TagCheckStrictness allow_unpublished>
-Tagged<Object> IndirectPointerSlot::ResolveTrustedPointerHandle(
+Tagged<Object> IndirectPointerSlot::ResolveIndirectPointerHandle(
     IndirectPointerHandle handle, IsolateForSandbox isolate) const {
   DCHECK_NE(handle, kNullIndirectPointerHandle);
-  const TrustedPointerTable& table = isolate.GetTrustedPointerTableFor(tag_);
+  const TrustedPointerTable& table =
+      isolate.GetTrustedPointerTableFor(tag_range_);
   if constexpr (allow_unpublished == kAllowUnpublishedEntries) {
-    return Tagged<Object>(table.GetMaybeUnpublished(handle, tag_));
+    return Tagged<Object>(table.GetMaybeUnpublished(handle, tag_range_));
   }
-  return Tagged<Object>(table.Get(handle, tag_));
-}
-
-Tagged<Object> IndirectPointerSlot::ResolveCodePointerHandle(
-    IndirectPointerHandle handle) const {
-  DCHECK_NE(handle, kNullIndirectPointerHandle);
-  Address addr =
-      IsolateGroup::current()->code_pointer_table()->GetCodeObject(handle);
-  return Tagged<Object>(addr);
+  return Tagged<Object>(table.Get(handle, tag_range_));
 }
 #endif  // V8_ENABLE_SANDBOX
 
@@ -489,7 +481,7 @@ inline void MemsetTagged(Tagged_t* start, Tagged<MaybeObject> value,
 #else
   Tagged_t raw_value = value.ptr();
 #endif
-  Memset(start, raw_value, count);
+  std::fill_n(start, count, raw_value);
 }
 
 inline void Relaxed_MemsetTagged(Tagged_t* start, Tagged<MaybeObject> value,
@@ -516,7 +508,7 @@ inline void Relaxed_MemsetTagged(SlotBase<T, Tagged_t> start,
 }
 
 void MemsetPointer(FullObjectSlot start, Tagged<Object> value, size_t count) {
-  Memset(start.location(), value.ptr(), count);
+  std::fill_n(start.location(), count, value.ptr());
 }
 
 }  // namespace internal

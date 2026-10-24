@@ -25,6 +25,23 @@ const { SendQueue } = require('./sender')
 const { WebsocketFrameSend } = require('./frame')
 const { channels } = require('../../core/diagnostics')
 
+const kRef = Symbol.for('nodejs.ref')
+const kUnref = Symbol.for('nodejs.unref')
+
+let ping
+
+function getSocketAddress (socket) {
+  if (typeof socket?.address === 'function') {
+    return socket.address()
+  }
+
+  if (typeof socket?.session?.socket?.address === 'function') {
+    return socket.session.socket.address()
+  }
+
+  return null
+}
+
 /**
  * @typedef {object} Handler
  * @property {(response: any, extensions?: string[]) => void} onConnectionEstablished
@@ -56,6 +73,7 @@ class WebSocket extends EventTarget {
   #bufferedAmount = 0
   #protocol = ''
   #extensions = ''
+  #refed = true
 
   /** @type {SendQueue} */
   #sendQueue
@@ -182,13 +200,25 @@ class WebSocket extends EventTarget {
     this.#binaryType = 'blob'
   }
 
+  // TODO: remove this
+  [kRef] () {
+    this.#refed = true
+    this.#handler.socket?.ref?.()
+  }
+
+  // TODO: remove this
+  [kUnref] () {
+    this.#refed = false
+    this.#handler.socket?.unref?.()
+  }
+
   /**
    * @see https://websockets.spec.whatwg.org/#dom-websocket-close
    * @param {number|undefined} code
    * @param {string|undefined} reason
    */
   close (code = undefined, reason = undefined) {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     const prefix = 'WebSocket.close'
 
@@ -215,7 +245,7 @@ class WebSocket extends EventTarget {
    * @param {NodeJS.TypedArray|ArrayBuffer|Blob|string} data
    */
   send (data) {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     const prefix = 'WebSocket.send'
     webidl.argumentLengthCheck(arguments, 1, prefix)
@@ -309,45 +339,45 @@ class WebSocket extends EventTarget {
   }
 
   get readyState () {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     // The readyState getter steps are to return this's ready state.
     return this.#handler.readyState
   }
 
   get bufferedAmount () {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     return this.#bufferedAmount
   }
 
   get url () {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     // The url getter steps are to return this's url, serialized.
     return URLSerializer(this.#url)
   }
 
   get extensions () {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     return this.#extensions
   }
 
   get protocol () {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     return this.#protocol
   }
 
   get onopen () {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     return this.#events.open
   }
 
   set onopen (fn) {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     if (this.#events.open) {
       this.removeEventListener('open', this.#events.open)
@@ -364,13 +394,13 @@ class WebSocket extends EventTarget {
   }
 
   get onerror () {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     return this.#events.error
   }
 
   set onerror (fn) {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     if (this.#events.error) {
       this.removeEventListener('error', this.#events.error)
@@ -387,13 +417,13 @@ class WebSocket extends EventTarget {
   }
 
   get onclose () {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     return this.#events.close
   }
 
   set onclose (fn) {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     if (this.#events.close) {
       this.removeEventListener('close', this.#events.close)
@@ -410,13 +440,13 @@ class WebSocket extends EventTarget {
   }
 
   get onmessage () {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     return this.#events.message
   }
 
   set onmessage (fn) {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     if (this.#events.message) {
       this.removeEventListener('message', this.#events.message)
@@ -433,13 +463,13 @@ class WebSocket extends EventTarget {
   }
 
   get binaryType () {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     return this.#binaryType
   }
 
   set binaryType (type) {
-    webidl.brandCheck(this, WebSocket)
+    webidl.brandCheck(this, webidl.is.WebSocket)
 
     if (type !== 'blob' && type !== 'arraybuffer') {
       this.#binaryType = 'blob'
@@ -452,11 +482,22 @@ class WebSocket extends EventTarget {
    * @see https://websockets.spec.whatwg.org/#feedback-from-the-protocol
    */
   #onConnectionEstablished (response, parsedExtensions) {
-    // processResponse is called when the "response’s header list has been received and initialized."
+    // processResponse is called when the "response's header list has been received and initialized."
     // once this happens, the connection is open
     this.#handler.socket = response.socket
 
-    const parser = new ByteParser(this.#handler, parsedExtensions)
+    if (!this.#refed) {
+      this.#handler.socket.unref?.()
+    }
+
+    // Get options from dispatcher options
+    const maxFragments = this.#handler.controller.dispatcher?.webSocketOptions?.maxFragments
+    const maxPayloadSize = this.#handler.controller.dispatcher?.webSocketOptions?.maxPayloadSize
+
+    const parser = new ByteParser(this.#handler, parsedExtensions, {
+      maxFragments,
+      maxPayloadSize
+    })
     parser.on('drain', () => this.#handler.onParserDrain())
     parser.on('error', (err) => this.#handler.onParserError(err))
 
@@ -491,7 +532,7 @@ class WebSocket extends EventTarget {
       // Convert headers to a plain object for the event
       const headers = response.headersList.entries
       channels.open.publish({
-        address: response.socket.address(),
+        address: getSocketAddress(response.socket),
         protocol: this.#protocol,
         extensions: this.#extensions,
         websocket: this,
@@ -613,32 +654,35 @@ class WebSocket extends EventTarget {
     }
   }
 
-  /**
-   * @param {WebSocket} ws
-   * @param {Buffer|undefined} buffer
-   */
-  static ping (ws, buffer) {
-    if (Buffer.isBuffer(buffer)) {
-      if (buffer.length > 125) {
-        throw new TypeError('A PING frame cannot have a body larger than 125 bytes.')
+  static {
+    /**
+     * @param {WebSocket} ws
+     * @param {Buffer|undefined} buffer
+     */
+    ping = (ws, buffer) => {
+      if (Buffer.isBuffer(buffer)) {
+        if (buffer.length > 125) {
+          throw new TypeError('A PING frame cannot have a body larger than 125 bytes.')
+        }
+      } else if (buffer !== undefined) {
+        throw new TypeError('Expected buffer payload')
       }
-    } else if (buffer !== undefined) {
-      throw new TypeError('Expected buffer payload')
+
+      // An endpoint MAY send a Ping frame any time after the connection is
+      // established and before the connection is closed.
+      const readyState = ws.#handler.readyState
+
+      if (isEstablished(readyState) && !isClosing(readyState) && !isClosed(readyState)) {
+        const frame = new WebsocketFrameSend(buffer)
+        ws.#handler.socket.write(frame.createFrame(opcodes.PING))
+      }
     }
 
-    // An endpoint MAY send a Ping frame any time after the connection is
-    // established and before the connection is closed.
-    const readyState = ws.#handler.readyState
-
-    if (isEstablished(readyState) && !isClosing(readyState) && !isClosed(readyState)) {
-      const frame = new WebsocketFrameSend(buffer)
-      ws.#handler.socket.write(frame.createFrame(opcodes.PING))
+    webidl.is.WebSocket = (arg) => {
+      return arg != null && typeof arg === 'object' && #handler in arg
     }
   }
 }
-
-const { ping } = WebSocket
-Reflect.deleteProperty(WebSocket, 'ping')
 
 // https://websockets.spec.whatwg.org/#dom-websocket-connecting
 WebSocket.CONNECTING = WebSocket.prototype.CONNECTING = states.CONNECTING

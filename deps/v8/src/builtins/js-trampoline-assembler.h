@@ -18,26 +18,12 @@ class JSTrampolineAssembler : public CodeStubAssembler {
   explicit JSTrampolineAssembler(compiler::CodeAssemblerState* state)
       : CodeStubAssembler(state) {}
 
-  void TailCallJSFunction(TNode<JSFunction> function);
+  void TailCallJSFunction(TNode<JSFunction> function,
+                          TNode<Uint16T> expected_parameter_count);
 
-#ifdef V8_ENABLE_LEAPTIERING
   template <typename Function>
   void TieringBuiltinImpl(const Function& Impl);
 
-#else
-  void TailCallJSCode(TNode<Code> code, TNode<JSFunction> function);
-
-  void TailCallReturnedCode(Runtime::FunctionId function_id,
-                            TNode<JSFunction> function);
-
-  void TailCallRuntimeIfStateEquals(TNode<Uint32T> state,
-                                    TieringState expected_state,
-                                    Runtime::FunctionId function_id,
-                                    TNode<JSFunction> function);
-
-  void MaybeTailCallOptimizedCodeSlot(TNode<JSFunction> function,
-                                      TNode<FeedbackVector> feedback_vector);
-#endif  // V8_ENABLE_LEAPTIERING
 
   void CompileLazy(TNode<JSFunction> function, TNode<Context> context);
 };

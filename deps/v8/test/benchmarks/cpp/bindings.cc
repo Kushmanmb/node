@@ -292,12 +292,11 @@ class UnmanagedBindings : public BindingsBenchmarkBase<UnmanagedBindings> {
                                              WrapperTypeInfo* info,
                                              WrappableBase* wrappable) {
     // Set V8 to C++ reference.
-    int indices[] = {v8::benchmarking::kTypeOffset,
-                     v8::benchmarking::kInstanceOffset};
-    void* values[] = {info, wrappable};
-    START_ALLOW_USE_DEPRECATED()
-    v8_wrapper->SetAlignedPointerInInternalFields(2, indices, values);
-    END_ALLOW_USE_DEPRECATED()
+    v8_wrapper->SetAlignedPointerInInternalField(
+        v8::benchmarking::kTypeOffset, info, v8::kEmbedderDataTypeTagDefault);
+    v8_wrapper->SetAlignedPointerInInternalField(
+        v8::benchmarking::kInstanceOffset, wrappable,
+        v8::kEmbedderDataTypeTagDefault);
     // Set C++ to V8 reference.
     wrappable->SetWrapper(isolate, v8_wrapper);
   }
@@ -351,16 +350,15 @@ class ManagedBindings : public BindingsBenchmarkBase<ManagedBindings> {
                                              WrapperTypeInfo* info,
                                              WrappableBase* wrappable) {
     // Set V8 to C++ reference.
-    v8::Object::Wrap<v8::CppHeapPointerTag::kDefaultTag>(isolate, v8_wrapper,
-                                                         wrappable);
+    v8::Object::Wrap<v8::internal::kTagForTesting>(isolate, v8_wrapper,
+                                                   wrappable);
     // Set C++ to V8 reference.
     wrappable->SetWrapper(isolate, v8_wrapper);
   }
 
   template <typename T>
   static V8_INLINE T* Unwrap(v8::Isolate* isolate, v8::Local<v8::Object> thiz) {
-    return v8::Object::Unwrap<v8::CppHeapPointerTag::kDefaultTag, T>(isolate,
-                                                                     thiz);
+    return v8::Object::Unwrap<v8::internal::kTagForTesting, T>(isolate, thiz);
   }
 
   static void SetupContextTemplate(

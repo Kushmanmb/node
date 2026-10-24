@@ -2,13 +2,26 @@
 
 // Called from .github/workflows
 
+const getMajorTagPrefix = (versionTag) => {
+  const match = /^v(\d+)\./.exec(versionTag)
+  return match ? `v${match[1]}` : versionTag
+}
+
+const getPreviousRelease = ({ releases, versionTag }) => {
+  const majorTagPrefix = getMajorTagPrefix(versionTag)
+
+  return releases.find((release) => {
+    return release.tag_name !== versionTag && release.tag_name.startsWith(`${majorTagPrefix}.`)
+  })
+}
+
 const generateReleaseNotes = async ({ github, owner, repo, versionTag, commitHash }) => {
   const { data: releases } = await github.rest.repos.listReleases({
     owner,
     repo
   })
 
-  const previousRelease = releases.find((r) => r.tag_name.startsWith('v7'))
+  const previousRelease = getPreviousRelease({ releases, versionTag })
 
   const { data: { body } } = await github.rest.repos.generateReleaseNotes({
     owner,
@@ -62,12 +75,16 @@ const release = async ({ github, context, versionTag, commitHash }) => {
       ref: `heads/release/${versionTag}`
     })
   } catch (err) {
-    console.log("Couldn't delete release PR ref")
-    console.log(err)
+    if (err.status === 422 && err.response?.data?.message === 'Reference does not exist') {
+      return
+    }
+
+    throw err
   }
 }
 
 module.exports = {
   generatePr,
+  getPreviousRelease,
   release
 }

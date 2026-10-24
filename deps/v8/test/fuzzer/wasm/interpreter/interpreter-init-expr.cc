@@ -12,16 +12,15 @@
 #include "src/wasm/compilation-environment-inl.h"
 #include "src/wasm/fuzzing/random-module-generation.h"
 #include "src/wasm/wasm-engine.h"
-#include "src/wasm/wasm-feature-flags.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-objects-inl.h"
 #include "src/wasm/wasm-subtyping.h"
 #include "src/zone/accounting-allocator.h"
 #include "src/zone/zone.h"
 #include "test/common/flag-utils.h"
+#include "test/common/wasm/fuzzer-common.h"
 #include "test/common/wasm/wasm-module-runner.h"
 #include "test/fuzzer/fuzzer-support.h"
-#include "test/fuzzer/wasm/fuzzer-common.h"
 #include "test/fuzzer/wasm/interpreter/interpreter-fuzzer-common.h"
 
 namespace fuzzing = v8::internal::wasm::fuzzing;
@@ -123,82 +122,91 @@ void CheckEquivalent(const WasmValue& init_lhs, const WasmValue& init_rhs,
     const auto [lhs, rhs] = cmp.back();
     cmp.pop_back();
     CHECK_EQ(lhs.type(), rhs.type());
-    switch (lhs.type().kind()) {
-      case ValueKind::kF32:
-        CHECK_FLOAT_EQ(lhs.to_f32(), rhs.to_f32());
-        break;
-      case ValueKind::kF64:
-        CHECK_FLOAT_EQ(lhs.to_f64(), rhs.to_f64());
-        break;
-      case ValueKind::kI8:
-        CHECK_EQ(lhs.to_i8(), rhs.to_i8());
-        break;
-      case ValueKind::kI16:
-        CHECK_EQ(lhs.to_i16(), rhs.to_i16());
-        break;
-      case ValueKind::kI32:
-        CHECK_EQ(lhs.to_i32(), rhs.to_i32());
-        break;
-      case ValueKind::kI64:
-        CHECK_EQ(lhs.to_i64(), rhs.to_i64());
-        break;
-      case ValueKind::kS128:
-        CHECK_EQ(lhs.to_s128(), lhs.to_s128());
-        break;
-      case ValueKind::kRef:
-      case ValueKind::kRefNull: {
-        Tagged<Object> lhs_ref = *lhs.to_ref();
-        Tagged<Object> rhs_ref = *rhs.to_ref();
-        CHECK_EQ(IsNull(lhs_ref), IsNull(rhs_ref));
-        CHECK_EQ(IsWasmNull(lhs_ref), IsWasmNull(rhs_ref));
-        switch (lhs.type().heap_representation_non_shared()) {
-          case HeapType::kFunc:
-          case HeapType::kI31:
-            CHECK_EQ(lhs_ref, rhs_ref);
-            break;
-          case HeapType::kNoFunc:
-          case HeapType::kNone:
-          case HeapType::kNoExn:
-            CHECK(IsWasmNull(lhs_ref));
-            CHECK(IsWasmNull(rhs_ref));
-            break;
-          case HeapType::kNoExtern:
-            CHECK(IsNull(lhs_ref));
-            CHECK(IsNull(rhs_ref));
-            break;
-          case HeapType::kExtern:
-          case HeapType::kAny:
-          case HeapType::kEq:
-          case HeapType::kArray:
-          case HeapType::kStruct:
-            if (IsNullOrWasmNull(lhs_ref)) break;
-            if (IsWasmStruct(lhs_ref)) {
-              CheckStruct(lhs_ref, rhs_ref);
-            } else if (IsWasmArray(lhs_ref)) {
-              CheckArray(lhs_ref, rhs_ref);
-            } else if (IsSmi(lhs_ref)) {
-              CHECK_EQ(lhs_ref, rhs_ref);
-            }
-            break;
-          default:
-            CHECK(lhs.type().has_index());
-            if (IsWasmNull(lhs_ref)) break;
-            CanonicalTypeIndex type_index = lhs.type().ref_index();
-            TypeCanonicalizer* types = GetTypeCanonicalizer();
-            if (types->IsFunctionSignature(type_index)) {
-              CHECK_EQ(lhs_ref, rhs_ref);
-            } else if (types->IsStruct(type_index)) {
-              CheckStruct(lhs_ref, rhs_ref);
-            } else if (types->IsArray(type_index)) {
-              CheckArray(lhs_ref, rhs_ref);
-            } else {
-              UNIMPLEMENTED();
-            }
-        }
-        break;
+    if (lhs.type().is_numeric()) {
+      switch (lhs.type().numeric_kind()) {
+        case NumericKind::kI32:
+          CHECK_EQ(lhs.to_i32(), rhs.to_i32());
+          break;
+        case NumericKind::kI64:
+          CHECK_EQ(lhs.to_i64(), rhs.to_i64());
+          break;
+        case NumericKind::kF32:
+          CHECK_FLOAT_EQ(lhs.to_f32(), rhs.to_f32());
+          break;
+        case NumericKind::kF64:
+          CHECK_FLOAT_EQ(lhs.to_f64(), rhs.to_f64());
+          break;
+        case NumericKind::kS128:
+          CHECK_EQ(lhs.to_s128(), rhs.to_s128());
+          break;
+        case NumericKind::kI8:
+          CHECK_EQ(lhs.to_i8(), rhs.to_i8());
+          break;
+        case NumericKind::kI16:
+          CHECK_EQ(lhs.to_i16(), rhs.to_i16());
+          break;
+        default:
+          UNIMPLEMENTED();
       }
-      default:
-        UNIMPLEMENTED();
+    } else if (lhs.type().has_index()) {
+      Tagged<Object> lhs_ref = *lhs.to_ref();
+      Tagged<Object> rhs_ref = *rhs.to_ref();
+      CHECK_EQ(IsNull(lhs_ref), IsNull(rhs_ref));
+      CHECK_EQ(IsWasmNull(lhs_ref), IsWasmNull(rhs_ref));
+      if (IsNullOrWasmNull(lhs_ref)) continue;
+      if (lhs.type().ref_type_kind() == RefTypeKind::kStruct) {
+        CheckStruct(lhs_ref, rhs_ref);
+      } else if (lhs.type().ref_type_kind() == RefTypeKind::kArray) {
+        CheckArray(lhs_ref, rhs_ref);
+      } else {
+        DCHECK(lhs.type().ref_type_kind() == RefTypeKind::kFunction);
+        CHECK_EQ(lhs_ref, rhs_ref);
+      }
+    } else {
+      switch (lhs.type().generic_kind()) {
+        case GenericKind::kFunc:
+        case GenericKind::kI31: {
+          Tagged<Object> lhs_ref = *lhs.to_ref();
+          Tagged<Object> rhs_ref = *rhs.to_ref();
+          CHECK_EQ(lhs_ref, rhs_ref);
+          break;
+        }
+        case GenericKind::kNoFunc:
+        case GenericKind::kNone:
+        case GenericKind::kNoExn: {
+          Tagged<Object> lhs_ref = *lhs.to_ref();
+          Tagged<Object> rhs_ref = *rhs.to_ref();
+          CHECK(IsWasmNull(lhs_ref));
+          CHECK(IsWasmNull(rhs_ref));
+          break;
+        }
+        case GenericKind::kNoExtern: {
+          Tagged<Object> lhs_ref = *lhs.to_ref();
+          Tagged<Object> rhs_ref = *rhs.to_ref();
+          CHECK(IsNull(lhs_ref));
+          CHECK(IsNull(rhs_ref));
+          break;
+        }
+        case GenericKind::kExtern:
+        case GenericKind::kAny:
+        case GenericKind::kEq:
+        case GenericKind::kArray:
+        case GenericKind::kStruct: {
+          Tagged<Object> lhs_ref = *lhs.to_ref();
+          Tagged<Object> rhs_ref = *rhs.to_ref();
+          if (IsNullOrWasmNull(lhs_ref)) break;
+          if (IsWasmStruct(lhs_ref)) {
+            CheckStruct(lhs_ref, rhs_ref);
+          } else if (IsWasmArray(lhs_ref)) {
+            CheckArray(lhs_ref, rhs_ref);
+          } else if (IsSmi(lhs_ref)) {
+            CHECK_EQ(lhs_ref, rhs_ref);
+          }
+          break;
+        }
+        default:
+          UNIMPLEMENTED();
+      }
     }
   }
 }
@@ -263,7 +271,7 @@ void FuzzIt(base::Vector<const uint8_t> data) {
       compiled_module.ToHandleChecked();
   DirectHandle<WasmInstanceObject> instance =
       GetWasmEngine()
-          ->SyncInstantiate(i_isolate, &thrower, module_object, {}, {})
+          ->SyncInstantiate(i_isolate, &thrower, module_object, {})
           .ToHandleChecked();
   CHECK_EQ(expression_count,
            module_object->native_module()->module()->num_declared_functions);
@@ -281,7 +289,7 @@ void FuzzIt(base::Vector<const uint8_t> data) {
     snprintf(buffer, sizeof buffer, "g%zu", i);
     auto global =
         Cast<WasmGlobalObject>(GetExport(i_isolate, instance, buffer));
-    switch (global->type().kind()) {
+    switch (global->unsafe_type().kind()) {
       case ValueKind::kF32: {
         float global_val = global->GetF32();
         float func_val;
@@ -342,7 +350,7 @@ void FuzzIt(base::Vector<const uint8_t> data) {
         CHECK_EQ(IsNullOrWasmNull(*global_val),
                  IsNullOrWasmNull(*function_result));
         if (!IsNullOrWasmNull(*global_val)) {
-          if (IsSubtypeOf(global->type(), kWasmFuncRef,
+          if (IsSubtypeOf(global->unsafe_type(), kWasmFuncRef,
                           module_object->native_module()->module())) {
             // For any function the global should be an internal function
             // whose external function equals the call result. (The call goes
@@ -358,7 +366,8 @@ void FuzzIt(base::Vector<const uint8_t> data) {
             DisallowGarbageCollection no_gc;
             WasmValue global_value =
                 instance->trusted_data(i_isolate)->GetGlobalValue(
-                    i_isolate, instance->module()->globals[i]);
+                    i_isolate,
+                    instance->trusted_data(i_isolate)->module()->globals[i]);
             WasmValue func_value(function_result, global_value.type());
             CheckEquivalent(global_value, func_value,
                             *module_object->native_module()->module());

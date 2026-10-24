@@ -35,20 +35,20 @@ class SourceTextModuleDescriptor : public ZoneObject {
   // import x from "foo.js";
   // import {x} from "foo.js";
   // import {x as y} from "foo.js";
-  void AddImport(const AstRawString* import_name,
-                 const AstRawString* local_name, const AstRawString* specifier,
-                 const ModuleImportPhase import_phase,
-                 const ImportAttributes* import_attributes,
-                 const Scanner::Location loc,
-                 const Scanner::Location specifier_loc, Zone* zone);
+  V8_NODISCARD bool AddImport(
+      const AstRawString* import_name, const AstRawString* local_name,
+      const AstRawString* specifier, const ModuleImportPhase import_phase,
+      const ImportAttributes* import_attributes, const Scanner::Location loc,
+      const Scanner::Location specifier_loc, Zone* zone);
 
   // import * as x from "foo.js";
-  void AddStarImport(const AstRawString* local_name,
-                     const AstRawString* specifier,
-                     const ModuleImportPhase import_phase,
-                     const ImportAttributes* import_attributes,
-                     const Scanner::Location loc,
-                     const Scanner::Location specifier_loc, Zone* zone);
+  V8_NODISCARD bool AddStarImport(const AstRawString* local_name,
+                                  const AstRawString* specifier,
+                                  const ModuleImportPhase import_phase,
+                                  const ImportAttributes* import_attributes,
+                                  const Scanner::Location loc,
+                                  const Scanner::Location specifier_loc,
+                                  Zone* zone);
 
   // import "foo.js";
   // import {} from "foo.js";
@@ -173,6 +173,8 @@ class SourceTextModuleDescriptor : public ZoneObject {
 
   using ModuleRequestMap =
       ZoneSet<const AstModuleRequest*, ModuleRequestComparer>;
+  using NamespaceImportMap =
+      ZoneMap<const AstRawString*, const Entry*, AstRawStringComparer>;
   using RegularExportMap =
       ZoneMultimap<const AstRawString*, Entry*, AstRawStringComparer>;
   using RegularImportMap =
@@ -182,7 +184,7 @@ class SourceTextModuleDescriptor : public ZoneObject {
   const ModuleRequestMap& module_requests() const { return module_requests_; }
 
   // Namespace imports.
-  const ZoneVector<const Entry*>& namespace_imports() const {
+  const NamespaceImportMap& namespace_imports() const {
     return namespace_imports_;
   }
 
@@ -203,7 +205,7 @@ class SourceTextModuleDescriptor : public ZoneObject {
     DCHECK_NOT_NULL(entry->local_name);
     DCHECK_NULL(entry->import_name);
     DCHECK_LT(entry->module_request, 0);
-    regular_exports_.insert(std::make_pair(entry->local_name, entry));
+    regular_exports_.emplace(entry->local_name, entry);
   }
 
   void AddSpecialExport(const Entry* entry, Zone* zone) {
@@ -212,22 +214,20 @@ class SourceTextModuleDescriptor : public ZoneObject {
     special_exports_.push_back(entry);
   }
 
-  void AddRegularImport(Entry* entry) {
+  V8_NODISCARD bool AddRegularImport(Entry* entry) {
     DCHECK_NOT_NULL(entry->import_name);
     DCHECK_NOT_NULL(entry->local_name);
     DCHECK_NULL(entry->export_name);
     DCHECK_LE(0, entry->module_request);
-    regular_imports_.insert(std::make_pair(entry->local_name, entry));
-    // We don't care if there's already an entry for this local name, as in that
-    // case we will report an error when declaring the variable.
+    return regular_imports_.emplace(entry->local_name, entry).second;
   }
 
-  void AddNamespaceImport(const Entry* entry, Zone* zone) {
+  V8_NODISCARD bool AddNamespaceImport(const Entry* entry, Zone* zone) {
     DCHECK_NULL(entry->import_name);
     DCHECK_NULL(entry->export_name);
     DCHECK_NOT_NULL(entry->local_name);
     DCHECK_LE(0, entry->module_request);
-    namespace_imports_.push_back(entry);
+    return namespace_imports_.emplace(entry->local_name, entry).second;
   }
 
   template <typename IsolateT>
@@ -237,7 +237,7 @@ class SourceTextModuleDescriptor : public ZoneObject {
  private:
   ModuleRequestMap module_requests_;
   ZoneVector<const Entry*> special_exports_;
-  ZoneVector<const Entry*> namespace_imports_;
+  NamespaceImportMap namespace_imports_;
   RegularExportMap regular_exports_;
   RegularImportMap regular_imports_;
 

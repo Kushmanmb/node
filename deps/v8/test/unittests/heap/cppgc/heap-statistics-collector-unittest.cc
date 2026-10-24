@@ -2,14 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/heap/cppgc/heap-statistics-collector.h"
+#include "src/heap/cppgc-internal/heap-statistics-collector.h"
 
 #include "include/cppgc/allocation.h"
 #include "include/cppgc/heap-statistics.h"
 #include "include/cppgc/persistent.h"
 #include "src/base/logging.h"
 #include "src/base/macros.h"
-#include "src/heap/cppgc/globals.h"
+#include "src/heap/cppgc-internal/globals.h"
 #include "test/unittests/heap/cppgc/tests.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -167,7 +167,7 @@ TEST_F(HeapStatisticsCollectorTest,
   internal::Heap::From(GetHeap())->CollectGarbage(
       {CollectionType::kMinor, Heap::StackState::kNoHeapPointers,
        cppgc::Heap::MarkingType::kAtomic, cppgc::Heap::SweepingType::kAtomic,
-       GCConfig::FreeMemoryHandling::kDoNotDiscard});
+       GCConfig::FreeMemoryHandling::kRetainMemory});
 
   HeapStatistics brief_stats = Heap::From(GetHeap())->CollectStatistics(
       HeapStatistics::DetailLevel::kBrief);
@@ -186,7 +186,7 @@ TEST_F(HeapStatisticsCollectorTest,
   internal::Heap::From(GetHeap())->CollectGarbage(
       {CollectionType::kMinor, Heap::StackState::kMayContainHeapPointers,
        cppgc::Heap::MarkingType::kAtomic, cppgc::Heap::SweepingType::kAtomic,
-       GCConfig::FreeMemoryHandling::kDiscardWherePossible});
+       GCConfig::FreeMemoryHandling::kReleaseMemory});
   brief_stats = Heap::From(GetHeap())->CollectStatistics(
       HeapStatistics::DetailLevel::kBrief);
   EXPECT_EQ(0u, brief_stats.pooled_memory_size_bytes);

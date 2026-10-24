@@ -14,8 +14,6 @@
       'includes': ['config/archs/BSD-x86/asm_avx2/openssl-cl.gypi'],
     }, 'target_arch=="ia32" and OS=="linux"', {
       'includes': ['config/archs/linux-elf/asm_avx2/openssl-cl.gypi'],
-    }, 'target_arch=="ia32" and OS=="mac"', {
-      'includes': ['config/archs/darwin-i386-cc/asm_avx2/openssl-cl.gypi'],
     }, 'target_arch=="ia32" and OS=="solaris"', {
       'includes': ['config/archs/solaris-x86-gcc/asm_avx2/openssl-cl.gypi'],
     }, 'target_arch=="ia32" and OS=="win"', {
@@ -35,6 +33,8 @@
       'includes': ['config/archs/VC-WIN64A/asm_avx2/openssl-cl.gypi'],
     }, 'target_arch=="x64" and OS=="linux"', {
       'includes': ['config/archs/linux-x86_64/asm_avx2/openssl-cl.gypi'],
+    }, 'target_arch=="riscv64" and OS=="linux"', {
+      'includes': ['config/archs/linux64-riscv64/asm_avx2/openssl-cl.gypi'],
     }, {
       # Other architectures don't use assembly
       'includes': ['config/archs/linux-x86_64/asm_avx2/openssl-cl.gypi'],

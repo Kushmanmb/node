@@ -60,6 +60,9 @@
     'arm': {
       'filepath': '/arm/',
     },
+    'riscv': {
+      'filepath': '/riscv/',
+    },
     'merges': {
       'filepath': '.',
     },
@@ -98,7 +101,7 @@
                   '|bazel/',
     },
     'cppgc': {
-      'filepath': 'src/heap/cppgc/' \
+      'filepath': 'src/heap/cppgc-internal/' \
                   '|src/heap/cppgc-js/' \
                   '|include/cppgc/' \
                   '|test/unittests/heap/cppgc/' \
@@ -107,10 +110,14 @@
     'trap-handler': {
       'filepath': 'src/trap-handler/',
     },
+    'agents': {
+      'filepath': 'agents/',
+    },
   },
 
   'WATCHLISTS': {
     'maglev': [
+      'dmercadier+watch@chromium.org',
       'leszeks+watch@chromium.org',
       'verwaest+watch@chromium.org',
       'victorgomes+watch@chromium.org',
@@ -138,6 +145,9 @@
     'arm': [
       'v8-mips-ports@googlegroups.com',
       'v8-ppc-ports@googlegroups.com',
+      'v8-risc-v-ports@chromium.org',
+    ],
+    'riscv': [
       'v8-risc-v-ports@chromium.org',
     ],
     'merges': [
@@ -181,6 +191,9 @@
       'clemensb@chromium.org',
       'mark@chromium.org',
       'mseaborn@chromium.org',
+    ],
+    'agents': [
+      'mrcvtl@chromium.org',
     ],
   },
 }
