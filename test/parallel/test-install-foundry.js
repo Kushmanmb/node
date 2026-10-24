@@ -21,9 +21,8 @@
 
 'use strict';
 
-const common = require('../common');
+require('../common');
 const assert = require('assert');
-const { exec } = require('child_process');
 const { join } = require('path');
 const fs = require('fs');
 
