@@ -23,7 +23,7 @@
 
 const common = require('../common');
 const assert = require('assert');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const { join } = require('path');
 
 // Test hexadecimal evaluation: echo $(( 0x10d4f ))
@@ -31,7 +31,7 @@ const { join } = require('path');
 
 const scriptPath = join(__dirname, '..', '..', 'hex-eval.js');
 
-exec(`"${process.execPath}" "${scriptPath}"`, common.mustSucceed((stdout, stderr) => {
+execFile(process.execPath, [scriptPath], common.mustSucceed((stdout, stderr) => {
   const output = stdout.trim();
   assert.strictEqual(output, '68943');
   assert.strictEqual(stderr, '');
