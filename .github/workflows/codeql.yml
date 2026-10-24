@@ -19,7 +19,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [cpp, javascript, python]
+        include:
+          - language: cpp
+            build-mode: manual
+          - language: javascript
+            build-mode: ''
+          - language: python
+            build-mode: ''
 
     steps:
       - name: Checkout repository
@@ -30,10 +36,12 @@ jobs:
         uses: github/codeql-action/init@b20883b0cd1f46c72ae0ba6d1090936928f9fa30  # v4.32.0
         with:
           languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
           config-file: ./.github/codeql-config.yml
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@b20883b0cd1f46c72ae0ba6d1090936928f9fa30  # v4.32.0
+      - name: Build Node.js
+        if: matrix.language == 'cpp'
+        run: ./configure && make -j4
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@b20883b0cd1f46c72ae0ba6d1090936928f9fa30  # v4.32.0
