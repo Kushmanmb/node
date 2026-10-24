@@ -5,6 +5,7 @@
 #ifndef V8_MAGLEV_ARM_MAGLEV_ASSEMBLER_ARM_INL_H_
 #define V8_MAGLEV_ARM_MAGLEV_ASSEMBLER_ARM_INL_H_
 
+#include "src/base/iterator.h"
 #include "src/base/numbers/double.h"
 #include "src/codegen/interface-descriptors-inl.h"
 #include "src/codegen/macro-assembler-inl.h"
@@ -160,8 +161,8 @@ template <typename T, typename... Args>
 inline void PushIteratorReverse(MaglevAssembler* masm,
                                 base::iterator_range<T> range, Args... args) {
   PushAllHelper<Args...>::PushReverse(masm, args...);
-  for (auto iter = range.rbegin(), end = range.rend(); iter != end; ++iter) {
-    masm->Push(*iter);
+  for (const auto& item : base::Reversed(range)) {
+    masm->Push(item);
   }
 }
 
@@ -299,11 +300,11 @@ inline void MaglevAssembler::BuildTypedArrayDataPointer(Register data_pointer,
                                                         Register object) {
   DCHECK_NE(data_pointer, object);
   ldr(data_pointer,
-      FieldMemOperand(object, JSTypedArray::kExternalPointerOffset));
+      FieldMemOperand(object, offsetof(JSTypedArray, external_pointer_)));
   if (JSTypedArray::kMaxSizeInHeap == 0) return;
   TemporaryRegisterScope temps(this);
   Register base = temps.AcquireScratch();
-  ldr(base, FieldMemOperand(object, JSTypedArray::kBasePointerOffset));
+  ldr(base, FieldMemOperand(object, offsetof(JSTypedArray, base_pointer_)));
   add(data_pointer, data_pointer, base);
 }
 
@@ -314,9 +315,28 @@ inline MemOperand MaglevAssembler::TypedArrayElementOperand(
   return MemOperand(data_pointer);
 }
 
-inline MemOperand MaglevAssembler::DataViewElementOperand(Register data_pointer,
-                                                          Register index) {
-  return MemOperand(data_pointer, index);
+inline void MaglevAssembler::StoreDataViewElement(Register value,
+                                                  Register data_pointer,
+                                                  Register index,
+                                                  int element_size) {
+  MemOperand element_address = MemOperand(data_pointer, index);
+  StoreField(element_address, value, element_size);
+}
+
+inline void MaglevAssembler::LoadDataViewElement(Register result,
+                                                 Register data_pointer,
+                                                 Register index,
+                                                 int element_size) {
+  MemOperand element_address = MemOperand(data_pointer, index);
+  LoadSignedField(result, element_address, element_size);
+}
+
+inline void MaglevAssembler::LoadUnsignedDataViewElement(Register result,
+                                                         Register data_pointer,
+                                                         Register index,
+                                                         int element_size) {
+  MemOperand element_address = MemOperand(data_pointer, index);
+  LoadUnsignedField(result, element_address, element_size);
 }
 
 inline void MaglevAssembler::LoadTaggedFieldByIndex(Register result,
@@ -341,7 +361,9 @@ inline void MaglevAssembler::LoadExternalPointerField(Register result,
 void MaglevAssembler::LoadFixedArrayElement(Register result, Register array,
                                             Register index) {
   if (v8_flags.debug_code) {
-    AssertObjectType(array, FIXED_ARRAY_TYPE, AbortReason::kUnexpectedValue);
+    AssertObjectTypeInRange(array, FIRST_FIXED_ARRAY_TYPE,
+                            LAST_FIXED_ARRAY_TYPE,
+                            AbortReason::kUnexpectedValue);
     CompareInt32AndAssert(index, 0, kUnsignedGreaterThanEqual,
                           AbortReason::kUnexpectedNegativeValue);
   }
@@ -475,6 +497,18 @@ inline void MaglevAssembler::ReverseByteOrder(Register value, int size) {
   }
 }
 
+inline void MaglevAssembler::ReverseByteOrderUnsigned(Register value,
+                                                      int size) {
+  if (size == 2) {
+    rev(value, value);
+    lsr(value, value, Operand(16));
+  } else if (size == 4) {
+    rev(value, value);
+  } else {
+    DCHECK_EQ(size, 1);
+  }
+}
+
 inline void MaglevAssembler::IncrementInt32(Register reg) {
   add(reg, reg, Operand(1));
 }
@@ -487,8 +521,20 @@ inline void MaglevAssembler::AddInt32(Register reg, int amount) {
   add(reg, reg, Operand(amount));
 }
 
+inline void MaglevAssembler::AddInt32(Register reg, Register other) {
+  add(reg, reg, other);
+}
+
+inline void MaglevAssembler::AddInt32(Register dst, Register src, int amount) {
+  add(dst, src, Operand(amount));
+}
+
 inline void MaglevAssembler::AndInt32(Register reg, int mask) {
   and_(reg, reg, Operand(mask));
+}
+
+inline void MaglevAssembler::AndInt32(Register dst, Register src, int mask) {
+  and_(dst, src, Operand(mask));
 }
 
 inline void MaglevAssembler::OrInt32(Register reg, int mask) {
@@ -507,6 +553,29 @@ inline void MaglevAssembler::ShiftLeft(Register reg, int amount) {
   lsl(reg, reg, Operand(amount));
 }
 
+inline void MaglevAssembler::ShiftRightLogical32(Register dst, int32_t value) {
+  lsr(dst, dst, Operand(value));
+}
+
+inline void MaglevAssembler::ShiftRightLogical32(Register dst, Register src,
+                                                 int32_t value) {
+  lsr(dst, src, Operand(value));
+}
+
+inline void MaglevAssembler::SubInt32(Register dst, Register src) {
+  sub(dst, dst, src);
+}
+
+inline void MaglevAssembler::SubInt32(Register dst, Register src1,
+                                      Register src2) {
+  sub(dst, src1, src2);
+}
+
+inline void MaglevAssembler::LoadBitsFromWord32(Register dst, Register src,
+                                                int width, int shift) {
+  ubfx(dst, src, shift, width);
+}
+
 inline void MaglevAssembler::IncrementAddress(Register reg, int32_t delta) {
   add(reg, reg, Operand(delta));
 }
@@ -516,11 +585,12 @@ inline void MaglevAssembler::LoadAddress(Register dst, MemOperand location) {
   add(dst, location.rn(), Operand(location.offset()));
 }
 
-inline void MaglevAssembler::Call(Label* target) { bl(target); }
+inline void MaglevAssembler::MakeWeak(Register dst, Register src) {
+  orr(dst, src, Operand(kWeakHeapObjectTag));
+}
 
 inline void MaglevAssembler::EmitEnterExitFrame(int extra_slots,
                                                 StackFrame::Type frame_type,
-                                                Register c_function,
                                                 Register scratch) {
   EnterExitFrame(scratch, extra_slots, frame_type);
 }
@@ -613,6 +683,57 @@ inline void MaglevAssembler::StoreFloat64(MemOperand dst, DoubleRegister src) {
   vstr(src, dst);
 }
 
+inline void MaglevAssembler::LoadUnalignedFloat32(DoubleRegister dst,
+                                                  Register base,
+                                                  Register index) {
+  UseScratchRegisterScope temps(this);
+  SwVfpRegister temp_vfps = SwVfpRegister::no_reg();
+  if (dst.code() < 16) {
+    temp_vfps = LowDwVfpRegister::from_code(dst.code()).low();
+  } else {
+    temp_vfps = temps.AcquireS();
+  }
+  Register scratch = temps.Acquire();
+  ldr(scratch, MemOperand(base, index));
+  vmov(temp_vfps, scratch);
+  vcvt_f64_f32(dst, temp_vfps);
+}
+inline void MaglevAssembler::LoadUnalignedFloat32AndReverseByteOrder(
+    DoubleRegister dst, Register base, Register index) {
+  UseScratchRegisterScope temps(this);
+  SwVfpRegister temp_vfps = SwVfpRegister::no_reg();
+  if (dst.code() < 16) {
+    temp_vfps = LowDwVfpRegister::from_code(dst.code()).low();
+  } else {
+    temp_vfps = temps.AcquireS();
+  }
+  Register scratch = temps.Acquire();
+  ldr(scratch, MemOperand(base, index));
+  rev(scratch, scratch);
+  vmov(temp_vfps, scratch);
+  vcvt_f64_f32(dst, temp_vfps);
+}
+inline void MaglevAssembler::StoreUnalignedFloat32(Register base,
+                                                   Register index,
+                                                   DoubleRegister src) {
+  UseScratchRegisterScope temps(this);
+  SwVfpRegister temp_vfps = temps.AcquireS();
+  vcvt_f32_f64(temp_vfps, src);
+  Register scratch = temps.Acquire();
+  vmov(scratch, temp_vfps);
+  str(scratch, MemOperand(base, index));
+}
+inline void MaglevAssembler::ReverseByteOrderAndStoreUnalignedFloat32(
+    Register base, Register index, DoubleRegister src) {
+  UseScratchRegisterScope temps(this);
+  SwVfpRegister temp_vfps = temps.AcquireS();
+  vcvt_f32_f64(temp_vfps, src);
+  Register scratch = temps.Acquire();
+  vmov(scratch, temp_vfps);
+  rev(scratch, scratch);
+  str(scratch, MemOperand(base, index));
+}
+
 inline void MaglevAssembler::LoadUnalignedFloat64(DoubleRegister dst,
                                                   Register base,
                                                   Register index) {
@@ -694,26 +815,26 @@ inline void MaglevAssembler::ToUint8Clamped(Register result,
 }
 
 template <typename NodeT>
-inline void MaglevAssembler::DeoptIfBufferDetached(Register array,
+inline void MaglevAssembler::DeoptIfBufferNotValid(Register array,
                                                    Register scratch,
+                                                   TypedArrayAccessMode mode,
                                                    NodeT* node) {
-    // A detached buffer leads to megamorphic feedback, so we won't have a deopt
-    // loop if we deopt here.
-    LoadTaggedField(scratch,
-                    FieldMemOperand(array, JSArrayBufferView::kBufferOffset));
-    LoadTaggedField(scratch,
-                    FieldMemOperand(scratch, JSArrayBuffer::kBitFieldOffset));
-    tst(scratch, Operand(JSArrayBuffer::WasDetachedBit::kMask));
-    EmitEagerDeoptIf(ne, DeoptimizeReason::kArrayBufferWasDetached, node);
+  // A detached buffer leads to megamorphic feedback, so we won't have a deopt
+  // loop if we deopt here.
+  LoadTaggedField(scratch,
+                  FieldMemOperand(array, offsetof(JSArrayBufferView, buffer_)));
+  LoadTaggedField(
+      scratch, FieldMemOperand(scratch, offsetof(JSArrayBuffer, bit_field_)));
+  tst(scratch, Operand(JSArrayBuffer::NotValidMask(mode)));
+  EmitEagerDeoptIf(ne, DeoptimizeReason::kArrayBufferWasDetached, node);
 }
-
 inline void MaglevAssembler::LoadByte(Register dst, MemOperand src) {
   ldrb(dst, src);
 }
 
 inline Condition MaglevAssembler::IsCallableAndNotUndetectable(
     Register map, Register scratch) {
-  ldrb(scratch, FieldMemOperand(map, Map::kBitFieldOffset));
+  ldrb(scratch, FieldMemOperand(map, offsetof(Map, bit_field_)));
   and_(scratch, scratch,
        Operand(Map::Bits1::IsUndetectableBit::kMask |
                Map::Bits1::IsCallableBit::kMask));
@@ -723,7 +844,7 @@ inline Condition MaglevAssembler::IsCallableAndNotUndetectable(
 
 inline Condition MaglevAssembler::IsNotCallableNorUndetactable(
     Register map, Register scratch) {
-  ldrb(scratch, FieldMemOperand(map, Map::kBitFieldOffset));
+  ldrb(scratch, FieldMemOperand(map, offsetof(Map, bit_field_)));
   tst(scratch, Operand(Map::Bits1::IsUndetectableBit::kMask |
                        Map::Bits1::IsCallableBit::kMask));
   return kEqual;
@@ -732,7 +853,8 @@ inline Condition MaglevAssembler::IsNotCallableNorUndetactable(
 inline void MaglevAssembler::LoadInstanceType(Register instance_type,
                                               Register heap_object) {
   LoadMap(instance_type, heap_object);
-  ldrh(instance_type, FieldMemOperand(instance_type, Map::kInstanceTypeOffset));
+  ldrh(instance_type,
+       FieldMemOperand(instance_type, offsetof(Map, instance_type_)));
 }
 
 inline void MaglevAssembler::JumpIfObjectType(Register heap_object,
@@ -941,6 +1063,11 @@ void MaglevAssembler::Float64SilenceNan(DoubleRegister value) {
   VFPCanonicalizeNaN(value, value);
 }
 
+void MaglevAssembler::Float64ExtractHighWord32(Register dst,
+                                               DoubleRegister src) {
+  VmovHigh(dst, src);
+}
+
 #ifdef V8_ENABLE_UNDEFINED_DOUBLE
 void MaglevAssembler::JumpIfUndefinedNan(DoubleRegister value, Register scratch,
                                          Label* target,
@@ -965,6 +1092,18 @@ void MaglevAssembler::JumpIfUndefinedNan(DoubleRegister value, Register scratch,
              value, scratch, is_undefined, is_not_undefined));
   bind(*is_not_undefined);
 }
+
+void MaglevAssembler::JumpIfUndefinedNan(MemOperand operand, Label* target,
+                                         Label::Distance distance) {
+  MaglevAssembler::TemporaryRegisterScope temps(this);
+  Register upper_bits = temps.AcquireScratch();
+  DCHECK(operand.IsImmediateOffset());
+  ldr(upper_bits, MemOperand(operand.rn(), operand.offset() + (kDoubleSize / 2),
+                             operand.am()));
+  CompareInt32AndJumpIf(upper_bits, kUndefinedNanUpper32, kEqual, target,
+                        distance);
+}
+
 void MaglevAssembler::JumpIfNotUndefinedNan(DoubleRegister value,
                                             Register scratch, Label* target,
                                             Label::Distance distance) {
@@ -996,6 +1135,16 @@ void MaglevAssembler::JumpIfHoleNan(DoubleRegister value, Register scratch,
              },
              value, scratch, is_hole, is_not_hole));
   bind(*is_not_hole);
+}
+
+void MaglevAssembler::JumpIfHoleNan(MemOperand operand, Label* target,
+                                    Label::Distance distance) {
+  MaglevAssembler::TemporaryRegisterScope temps(this);
+  Register upper_bits = temps.AcquireScratch();
+  DCHECK(operand.IsImmediateOffset());
+  ldr(upper_bits, MemOperand(operand.rn(), operand.offset() + (kDoubleSize / 2),
+                             operand.am()));
+  CompareInt32AndJumpIf(upper_bits, kHoleNanUpper32, kEqual, target, distance);
 }
 
 void MaglevAssembler::JumpIfNotHoleNan(DoubleRegister value, Register scratch,
@@ -1294,7 +1443,7 @@ inline Condition MaglevAssembler::FunctionEntryStackCheck(
     int stack_check_offset) {
   TemporaryRegisterScope temps(this);
   Register stack_cmp_reg = sp;
-  if (stack_check_offset >= kStackLimitSlackForDeoptimizationInBytes) {
+  if (stack_check_offset > kStackLimitSlackForDeoptimizationInBytes) {
     stack_cmp_reg = temps.AcquireScratch();
     sub(stack_cmp_reg, sp, Operand(stack_check_offset));
   }
@@ -1360,6 +1509,10 @@ inline void MaglevAssembler::LoadTaggedFieldWithoutDecompressing(
     Register result, Register object, int offset) {
   MacroAssembler::LoadTaggedFieldWithoutDecompressing(
       result, FieldMemOperand(object, offset));
+}
+
+inline void MaglevAssembler::MemoryBarrier(AtomicMemoryOrder order) {
+  dmb(ISH);
 }
 
 }  // namespace maglev

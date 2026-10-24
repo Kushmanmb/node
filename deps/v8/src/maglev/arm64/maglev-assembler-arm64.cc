@@ -155,33 +155,14 @@ void MaglevAssembler::Prologue(Graph* graph) {
   DCHECK(!graph->is_osr());
 
   CallTarget();
-  BailoutIfDeoptimized();
+  if (v8_flags.debug_code) {
+    AssertNotDeoptimized();
+  }
 
   if (graph->has_recursive_calls()) {
     BindCallTarget(code_gen_state()->entry_label());
   }
 
-#ifndef V8_ENABLE_LEAPTIERING
-  // Tiering support.
-  if (v8_flags.turbofan) {
-    using D = MaglevOptimizeCodeOrTailCallOptimizedCodeSlotDescriptor;
-    Register flags = D::GetRegisterParameter(D::kFlags);
-    Register feedback_vector = D::GetRegisterParameter(D::kFeedbackVector);
-    DCHECK(!AreAliased(flags, feedback_vector, kJavaScriptCallArgCountRegister,
-                       kJSFunctionRegister, kContextRegister,
-                       kJavaScriptCallNewTargetRegister,
-                       kJavaScriptCallDispatchHandleRegister));
-    DCHECK(!temps.Available().has(flags));
-    DCHECK(!temps.Available().has(feedback_vector));
-    Move(feedback_vector,
-         compilation_info()->toplevel_compilation_unit()->feedback().object());
-    Condition needs_processing =
-        LoadFeedbackVectorFlagsAndCheckIfNeedsProcessing(flags, feedback_vector,
-                                                         CodeKind::MAGLEV);
-    TailCallBuiltin(Builtin::kMaglevOptimizeCodeOrTailCallOptimizedCodeSlot,
-                    needs_processing);
-  }
-#endif  // !V8_ENABLE_LEAPTIERING
 
   EnterFrame(StackFrame::MAGLEV);
 
@@ -455,7 +436,7 @@ void MaglevAssembler::StringCharCodeOrCodePointAt(
     LoadAndUntagTaggedSignedField(offset, string,
                                   offsetof(SlicedString, offset_));
     LoadTaggedField(string, string, offsetof(SlicedString, parent_));
-    Add(index, index, offset);
+    Add(index.W(), index.W(), offset.W());
     B(&loop);
   }
 
@@ -637,6 +618,13 @@ void MaglevAssembler::TruncateDoubleToInt32(Register dst, DoubleRegister src) {
 void MaglevAssembler::TryTruncateDoubleToInt32(Register dst, DoubleRegister src,
                                                Label* fail) {
   TemporaryRegisterScope temps(this);
+  if (CpuFeatures::IsSupported(JSCVT)) {
+    // Fjcvtzs clears the Z flag if the conversion to int32 is inexact, and when
+    // the input is -0.
+    Fjcvtzs(dst.W(), src);
+    B(ne, fail);
+    return;
+  }
   DoubleRegister converted_back = temps.AcquireScratchDouble();
 
   // Convert the input float64 value to int32.

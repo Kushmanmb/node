@@ -34,6 +34,7 @@
 #include "src/handles/handles-inl.h"
 #include "src/heap/factory.h"
 #include "src/init/v8.h"
+#include "src/objects/object-conversions-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -210,7 +211,7 @@ class Types {
       }
       case 1: {  // constant
         int i = rng_->NextInt(static_cast<int>(values.size()));
-        if (!IsAnyHole(*values[i]) && IsHeapNumber(*values[i])) {
+        if (IsHeapNumber(*values[i])) {
           return Type::Constant(Cast<HeapNumber>(*values[i])->value(), zone_);
         }
         return Type::Constant(js_heap_broker(), values[i], zone_);

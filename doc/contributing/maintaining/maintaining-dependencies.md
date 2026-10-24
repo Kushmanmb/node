@@ -11,7 +11,6 @@ This a list of all the dependencies:
 * [acorn][]
 * [ada][]
 * [amaro][]
-* [base64][]
 * [brotli][]
 * [c-ares][]
 * [merve][]
@@ -20,14 +19,15 @@ This a list of all the dependencies:
 * [histogram][]
 * [icu-small][]
 * [inspector\_protocol][inspector_protocol]
+* [libffi][]
 * [libuv][]
 * [llhttp][]
-* [minimatch][]
 * [nghttp2][]
 * [nghttp3][]
 * [ngtcp2][]
 * [npm][]
 * [openssl][]
+* [perfetto][]
 * [postject][]
 * [simdjson][]
 * [sqlite][]
@@ -160,12 +160,12 @@ In order to minimize the different number of tools and versions
 used to build WASM components and to document and ensure future
 availability, the project builds and maintains a common
 [wasm-builder](https://github.com/nodejs/wasm-builder) container
-that should be use to build WASM components in Node.js
+that should be used to build WASM components in Node.js
 dependencies.
 
 The container provides a durable copy of the versions of the tools
 used for a specific build which are under the control of the Node.js
-project. In addition, the tools and verions are documented through metadata
+project. In addition, the tools and versions are documented through metadata
 within the container in the `/home/node/metadata directory`.
 
 The available tools can be found by looking at the current version of the
@@ -265,7 +265,7 @@ C++ testing and mocking framework.
 The [histogram](https://github.com/HdrHistogram/HdrHistogram_c) dependency is
 a C port of High Dynamic Range (HDR) Histogram.
 
-### ic
+### icu-small
 
 The [icu](http://site.icu-project.org) is widely used set of C/C++
 and Java libraries providing Unicode and Globalization
@@ -278,6 +278,11 @@ The [inspector\_protocol](https://chromium.googlesource.com/deps/inspector_proto
 is Chromium's of code generators and templates for the inspector protocol.
 See [this doc](../../../tools/inspector_protocol/README.md) for more information.
 
+### libffi
+
+The [libffi](https://github.com/libffi/libffi) dependency is a portable foreign
+function interface library used by `node:ffi`.
+
 ### libuv
 
 The [libuv](https://github.com/libuv/libuv) dependency is a
@@ -289,11 +294,6 @@ It was primarily developed for use by Node.js.
 The [llhttp](https://github.com/nodejs/llhttp) dependency is
 the http parser used by Node.js.
 See [maintaining-http][] for more information.
-
-### minimatch
-
-The [minimatch](https://github.com/isaacs/minimatch) dependency is a
-minimal matching utility.
 
 ### nghttp2
 
@@ -353,6 +353,11 @@ the main openssl/openssl releases with the addition of APIs to support
 the QUIC protocol.
 See [maintaining-openssl][] for more information.
 
+### perfetto
+
+The [perfetto](https://github.com/google/perfetto) dependency is used to
+generate performance traces for Node.js and V8.
+
 ### postject
 
 The [postject](https://github.com/nodejs/postject) dependency is used for the
@@ -403,7 +408,6 @@ according to [RFC 8878](https://datatracker.ietf.org/doc/html/rfc8878).
 [acorn]: #acorn
 [ada]: #ada
 [amaro]: #amaro
-[base64]: #base64
 [brotli]: #brotli
 [c-ares]: #c-ares
 [corepack]: #corepack
@@ -412,6 +416,7 @@ according to [RFC 8878](https://datatracker.ietf.org/doc/html/rfc8878).
 [histogram]: #histogram
 [icu-small]: #icu-small
 [inspector_protocol]: #inspector_protocol
+[libffi]: #libffi
 [libuv]: #libuv
 [llhttp]: #llhttp
 [maintaining-V8]: ./maintaining-V8.md
@@ -421,12 +426,12 @@ according to [RFC 8878](https://datatracker.ietf.org/doc/html/rfc8878).
 [maintaining-openssl]: ./maintaining-openssl.md
 [maintaining-web-assembly]: ./maintaining-web-assembly.md
 [merve]: #merve
-[minimatch]: #minimatch
 [nghttp2]: #nghttp2
 [nghttp3]: #nghttp3
 [ngtcp2]: #ngtcp2
 [npm]: #npm
 [openssl]: #openssl
+[perfetto]: #perfetto
 [postject]: #postject
 [simdjson]: #simdjson
 [sqlite]: #sqlite

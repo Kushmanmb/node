@@ -2,6 +2,9 @@
 
 <!-- YAML
 changes:
+  - version: v26.0.0
+    pr-url: https://github.com/nodejs/node/pull/61803
+    description: Removed `--experimental-transform-types` flag.
   - version:
       - v25.2.0
       - v24.12.0
@@ -77,9 +80,12 @@ By default Node.js will execute TypeScript files that contains only
 erasable TypeScript syntax.
 Node.js will replace TypeScript syntax with whitespace,
 and no type checking is performed.
-To enable the transformation of non erasable TypeScript syntax, which requires JavaScript code generation,
-such as `enum` declarations, parameter properties use the flag [`--experimental-transform-types`][].
 To disable this feature, use the flag [`--no-strip-types`][].
+
+The built-in TypeScript parser requires WebAssembly. If WebAssembly is
+unavailable, parsing throws
+[`ERR_WEBASSEMBLY_NOT_SUPPORTED`](errors.md#err_webassembly_not_supported).
+Node.js does not provide a non-WebAssembly parser as a fallback.
 
 Node.js ignores `tsconfig.json` files and therefore
 features that depend on settings within `tsconfig.json`,
@@ -139,18 +145,16 @@ include the `.ts` extension.
 ### TypeScript features
 
 Since Node.js is only removing inline types, any TypeScript features that
-involve _replacing_ TypeScript syntax with new JavaScript syntax will error,
-unless the flag [`--experimental-transform-types`][] is passed.
+involve _replacing_ TypeScript syntax with new JavaScript syntax will error.
 
 The most prominent features that require transformation are:
 
 * `Enum` declarations
 * `namespace` with runtime code
-* legacy `module` with runtime code
 * parameter properties
 * import aliases
 
-`namespaces` and `module` that do not contain runtime code are supported.
+`namespace`s that do not contain runtime code are supported.
 This example will work correctly:
 
 ```ts
@@ -211,14 +215,21 @@ TypeScript syntax is unsupported in the REPL, `--check`, and
 
 Since inline types are replaced by whitespace, source maps are unnecessary for
 correct line numbers in stack traces; and Node.js does not generate them.
-When [`--experimental-transform-types`][] is enabled, source-maps
-are enabled by default.
 
 ### Type stripping in dependencies
 
 To discourage package authors from publishing packages written in TypeScript,
 Node.js refuses to handle TypeScript files inside folders under a `node_modules`
 path.
+
+The [`--experimental-strip-private-modules`][] flag relaxes this restriction
+for packages whose `package.json` contains `"private": true`, such as
+workspace packages in a monorepo, which are not published to a registry.
+The limitation to private packages should never be lifted,
+as publishing packages with TypeScript sources
+is highly discouraged.
+Stripping types inside `node_modules` is intended only
+for local development.
 
 ### Paths aliases
 
@@ -229,11 +240,11 @@ with `#`.
 [CommonJS]: modules.md
 [ES Modules]: esm.md
 [Full TypeScript support]: #full-typescript-support
-[`--experimental-transform-types`]: cli.md#--experimental-transform-types
+[`--experimental-strip-private-modules`]: cli.md#--experimental-strip-private-modules
 [`--no-strip-types`]: cli.md#--no-strip-types
 [`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`]: errors.md#err_unsupported_typescript_syntax
 [`tsconfig` "paths"]: https://www.typescriptlang.org/tsconfig/#paths
-[`tsx`]: https://tsx.is/
+[`tsx`]: https://tsx.hirok.io/
 [`verbatimModuleSyntax`]: https://www.typescriptlang.org/tsconfig/#verbatimModuleSyntax
 [file extensions are mandatory]: esm.md#mandatory-file-extensions
 [full support]: #full-typescript-support

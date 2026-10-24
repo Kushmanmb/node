@@ -61,6 +61,10 @@ if (common.hasSQLite) {
   expected_keys.push('sqlite');
 }
 
+if (common.hasFFI) {
+  expected_keys.push('libffi');
+}
+
 expected_keys.sort();
 expected_keys.unshift('node');
 
@@ -85,6 +89,10 @@ if (process.config.variables.node_use_lief) {
   assert.match(process.versions.lief, commonTemplate);
 }
 
+if (common.hasFFI) {
+  assert.match(process.versions.libffi, commonTemplate);
+}
+
 if (hasUndici) {
   assert.match(process.versions.undici, commonTemplate);
 }
@@ -96,12 +104,12 @@ assert.match(
 assert.match(process.versions.modules, /^\d+$/);
 
 if (common.hasCrypto) {
-  const { hasOpenSSL3 } = require('../common/crypto');
+  const { hasOpenSSL } = require('../common/crypto');
   assert.match(process.versions.ncrypto, commonTemplate);
   if (process.config.variables.node_shared_openssl) {
     assert.ok(process.versions.openssl);
   } else {
-    const versionRegex = hasOpenSSL3 ?
+    const versionRegex = hasOpenSSL(3) ?
       // The following also matches a development version of OpenSSL 3.x which
       // can be in the format '3.0.0-alpha4-dev'. This can be handy when
       // building and linking against the main development branch of OpenSSL.

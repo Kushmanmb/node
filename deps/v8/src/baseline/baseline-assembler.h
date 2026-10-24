@@ -95,6 +95,14 @@ class BaselineAssembler {
   inline void JumpIfTagged(Condition cc, MemOperand operand, Register value,
                            Label* target,
                            Label::Distance distance = Label::kFar);
+#ifdef V8_STATIC_ROOTS
+  // Jumps to the true or false target if the value is a static root known to by
+  // truthy/falsy, fallthrough otherwise.
+  inline void JumpIfStaticRootToBoolean(Register value, Label* true_target,
+                                        Label::Distance true_distance,
+                                        Label* false_target,
+                                        Label::Distance false_distance);
+#endif
   inline void JumpIfByte(Condition cc, Register value, int32_t byte,
                          Label* target, Label::Distance distance = Label::kFar);
 
@@ -213,7 +221,8 @@ class BaselineAssembler {
   };
   inline void LdaContextSlotNoCell(
       Register context, uint32_t index, uint32_t depth,
-      CompressionMode compression_mode = CompressionMode::kDefault);
+      CompressionMode compression_mode = CompressionMode::kDefault,
+      Register output = kInterpreterAccumulatorRegister);
   inline void StaContextSlotNoCell(Register context, Register value,
                                    uint32_t index, uint32_t depth);
   inline void LdaModuleVariable(Register context, int cell_index,
@@ -226,6 +235,24 @@ class BaselineAssembler {
   inline void SmiUntag(Register output, Register value);
 
   inline void Word32And(Register output, Register lhs, int rhs);
+
+#ifdef V8_ENABLE_SPARKPLUG_PLUS
+  // Jumps to |target| unless both |lhs| and |rhs| are Smis, using a single
+  // merged tag test.
+  inline void JumpIfNotBothSmi(Register lhs, Register rhs, Label* target,
+                               Label::Distance distance = Label::kFar);
+
+  // Compares two tagged values without asserting that they are Smis.
+  inline void JumpIfTagged(Condition cc, Register lhs, Register rhs,
+                           Label* target,
+                           Label::Distance distance = Label::kFar);
+
+  // value := value + Smi(constant). Jumps to |overflow| when the result is not
+  // a valid Smi.
+  inline void SmiAddConstantAndJumpIfOverflow(
+      Register value, int constant, Label* overflow,
+      Label::Distance distance = Label::kFar);
+#endif  // V8_ENABLE_SPARKPLUG_PLUS
 
   inline void Switch(Register reg, int case_value_base, Label** labels,
                      int num_labels);

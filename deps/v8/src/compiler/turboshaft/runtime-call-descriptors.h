@@ -27,29 +27,35 @@ struct runtime : CallDescriptorBuilder {
 
   template <typename Derived>
   struct Descriptor {
-    static const TSCallDescriptor* Create(Zone* zone,
+    // Default effects are CanCallAnything to be as safe as possible. Individual
+    // RuntimeCallDescriptor can declare their own kEffects fields with narrower
+    // effects if desired.
+    static constexpr OpEffects kEffects = OpEffects().CanCallAnything();
+
+    static const TSCallDescriptor* Create(size_t actual_argument_count,
+                                          Zone* zone,
                                           LazyDeoptOnThrow lazy_deopt_on_throw,
                                           bool caller_can_deopt = true) {
-      DCHECK_IMPLIES(lazy_deopt_on_throw == LazyDeoptOnThrow::kYes,
-                     Derived::kCanTriggerLazyDeopt);
+      DCHECK_IMPLIES(lazy_deopt_on_throw, Derived::kCanTriggerLazyDeopt);
       auto descriptor = Linkage::GetRuntimeCallDescriptor(
-          zone, Derived::kFunction,
-          GetArgumentCount<typename Derived::Arguments>(), Derived::kProperties,
+          zone, Derived::kFunction, static_cast<int>(actual_argument_count),
+          Derived::kProperties,
           (Derived::kCanTriggerLazyDeopt && caller_can_deopt)
               ? CallDescriptor::kNeedsFrameState
               : CallDescriptor::kNoFlags);
 #ifdef DEBUG
-      Derived::Verify(descriptor, caller_can_deopt);
+      Derived::Verify(descriptor, actual_argument_count, caller_can_deopt);
 #endif  // DEBUG
       CanThrow can_throw = (Derived::kProperties & Operator::kNoThrow)
-                               ? CanThrow::kNo
-                               : CanThrow::kYes;
+                               ? CanThrow{false}
+                               : CanThrow{true};
       return TSCallDescriptor::Create(descriptor, can_throw,
                                       lazy_deopt_on_throw, zone);
     }
 
 #ifdef DEBUG
-    static void Verify(const CallDescriptor* desc, bool caller_can_deopt) {
+    static void Verify(const CallDescriptor* desc, size_t actual_argument_count,
+                       bool caller_can_deopt) {
       // Verify return types.
       using returns_t = typename Derived::returns_t;
       DCHECK_EQ(desc->ReturnCount(), 1);
@@ -61,11 +67,13 @@ struct runtime : CallDescriptorBuilder {
       const size_t arguments_count =
           runtime::GetArgumentCount<typename Derived::Arguments>();
       DCHECK_EQ(base::tmp::length_v<arguments_t>, arguments_count);
+      DCHECK_LE(actual_argument_count, arguments_count);
       constexpr int additional_stub_arguments =
           3;  // function id, argument count, context (or NoContextConstant)
       DCHECK_EQ(desc->ParameterCount(),
-                arguments_count + additional_stub_arguments);
-      base::tmp::call_foreach<arguments_t, VerifyArgument>(desc);
+                actual_argument_count + additional_stub_arguments);
+      base::tmp::call_foreach<arguments_t, VerifyArgument>(
+          desc, actual_argument_count);
 
       // Verify properties.
       DCHECK_EQ(desc->NeedsFrameState(),
@@ -104,6 +112,18 @@ struct runtime : CallDescriptorBuilder {
     static constexpr auto kFunction = Runtime::kDateCurrentTime;
     using Arguments = NoArguments;
     using returns_t = V<Number>;
+
+    static constexpr bool kCanTriggerLazyDeopt = false;
+    static constexpr Operator::Properties kProperties =
+        Operator::kNoDeopt | Operator::kNoThrow;
+  };
+
+  struct NumberToStringSlow : public Descriptor<NumberToStringSlow> {
+    static constexpr auto kFunction = Runtime::kNumberToStringSlow;
+    struct Arguments : ArgumentsBase {
+      ARG(V<Number>, input)
+    };
+    using returns_t = V<String>;
 
     static constexpr bool kCanTriggerLazyDeopt = false;
     static constexpr Operator::Properties kProperties =
@@ -183,9 +203,9 @@ struct runtime : CallDescriptorBuilder {
     };
     using returns_t = V<String>;
 
-    static constexpr bool kCanTriggerLazyDeopt = false;
+    static constexpr bool kCanTriggerLazyDeopt = true;
     static constexpr Operator::Properties kProperties =
-        Operator::kNoDeopt | Operator::kNoThrow;
+        Operator::kFoldable | Operator::kIdempotent;
   };
 #endif  // V8_INTL_SUPPORT
 
@@ -205,6 +225,8 @@ struct runtime : CallDescriptorBuilder {
     using Arguments = NoArguments;
     using returns_t = V<Object>;
 
+    // Even though termination doesn't resume in JS, we need a frame state
+    // here so the stack walker can summarize the frame.
     static constexpr bool kCanTriggerLazyDeopt = true;
     static constexpr Operator::Properties kProperties = Operator::kNoDeopt;
   };
@@ -351,6 +373,20 @@ struct runtime : CallDescriptorBuilder {
     static constexpr Operator::Properties kProperties = Operator::kNoProperties;
   };
 
+  struct ThrowTypeError : public Descriptor<ThrowTypeError> {
+    static constexpr auto kFunction = Runtime::kThrowTypeError;
+    struct Arguments : ArgumentsBase {
+      ARG(V<Smi>, template_index)
+      ARG(OptionalV<Object>, arg0)
+      ARG(OptionalV<Object>, arg1)
+      ARG(OptionalV<Object>, arg2)
+    };
+    using returns_t = Never;
+
+    static constexpr bool kCanTriggerLazyDeopt = false;
+    static constexpr Operator::Properties kProperties = Operator::kNoProperties;
+  };
+
   struct NewClosure : public Descriptor<NewClosure> {
     static constexpr auto kFunction = Runtime::kNewClosure;
     struct Arguments : ArgumentsBase {
@@ -379,10 +415,47 @@ struct runtime : CallDescriptorBuilder {
     static constexpr auto kFunction = Runtime::kHasInPrototypeChain;
     struct Arguments : ArgumentsBase {
       ARG(V<Object>, object)
-      ARG(V<HeapObject>, prototype)
+      ARG(V<Object>, prototype)
     };
     using returns_t = V<Boolean>;
 
+    static constexpr bool kCanTriggerLazyDeopt = true;
+    static constexpr Operator::Properties kProperties = Operator::kNoProperties;
+  };
+
+  struct ToString : public Descriptor<ToString> {
+    static constexpr auto kFunction = Runtime::kToString;
+    struct Arguments : ArgumentsBase {
+      ARG(V<Object>, input)
+    };
+    using returns_t = V<String>;
+
+    static constexpr bool kCanTriggerLazyDeopt = true;
+    static constexpr Operator::Properties kProperties = Operator::kNoProperties;
+  };
+
+  struct MajorGCForCompilerTesting
+      : public Descriptor<MajorGCForCompilerTesting> {
+    static constexpr auto kFunction = Runtime::kMajorGCForCompilerTesting;
+    using Arguments = NoArguments;
+    using returns_t = V<Object>;
+
+    // A GC never triggers a lazy deoptimization for the topmost optimized
+    // frame.
+    static constexpr bool kCanTriggerLazyDeopt = false;
+    static constexpr Operator::Properties kProperties = Operator::kFoldable;
+    static constexpr OpEffects kEffects =
+        OpEffects().CanAllocate().RequiredWhenUnused();
+  };
+
+  struct ArrayIsArray : public Descriptor<ArrayIsArray> {
+    static constexpr auto kFunction = Runtime::kArrayIsArray;
+    struct Arguments : ArgumentsBase {
+      ARG(V<Object>, input)
+    };
+    using returns_t = V<Boolean>;
+
+    // TODO(dmercadier): check if this can really lazy deopt.
     static constexpr bool kCanTriggerLazyDeopt = true;
     static constexpr Operator::Properties kProperties = Operator::kNoProperties;
   };

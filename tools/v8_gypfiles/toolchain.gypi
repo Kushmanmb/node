@@ -158,31 +158,12 @@
       ['v8_target_arch=="arm"', {
         'defines': [
           'V8_TARGET_ARCH_ARM',
+          'CAN_USE_ARMV7_INSTRUCTIONS',
+          'CAN_USE_VFP3_INSTRUCTIONS',
+          'CAN_USE_VFP32DREGS',
+          'CAN_USE_NEON',
         ],
         'conditions': [
-          [ 'arm_version==7 or arm_version=="default"', {
-            'defines': [
-              'CAN_USE_ARMV7_INSTRUCTIONS',
-            ],
-          }],
-          [ 'arm_fpu=="vfpv3-d16" or arm_fpu=="default"', {
-            'defines': [
-              'CAN_USE_VFP3_INSTRUCTIONS',
-            ],
-          }],
-          [ 'arm_fpu=="vfpv3"', {
-            'defines': [
-              'CAN_USE_VFP3_INSTRUCTIONS',
-              'CAN_USE_VFP32DREGS',
-            ],
-          }],
-          [ 'arm_fpu=="neon"', {
-            'defines': [
-              'CAN_USE_VFP3_INSTRUCTIONS',
-              'CAN_USE_VFP32DREGS',
-              'CAN_USE_NEON',
-            ],
-          }],
           [ 'arm_test_noprobe=="on"', {
             'defines': [
               'ARM_TEST_NO_FEATURE_PROBE',
@@ -316,7 +297,7 @@
               'V8_TARGET_ARCH_S390_LE_SIM',
             ],
           }, {
-            'cflags': [ '-march=z196' ],
+            'cflags': [ '-march=z14' ],
           }],
           ],
       }],  # s390x
@@ -326,15 +307,24 @@
         ],
         'cflags': [
           '-ffp-contract=off',
+          '-mcpu=power9',
         ],
         'conditions': [
           ['OS=="aix" or OS=="os400"', {
             # Work around AIX ceil, trunc and round oddities.
-            'cflags': [ '-mcpu=power5+ -mfprnd' ],
+            'conditions': [
+              ['clang==0', {
+                'cflags': [ '-mfprnd' ],
+              }],
+            ],
           }],
           ['OS=="aix" or OS=="os400"', {
-            # Work around AIX assembler popcntb bug.
-            'cflags': [ '-mno-popcntb' ],
+            'conditions': [
+              ['clang==0', {
+                # Work around AIX assembler popcntb bug.
+                'cflags': [ '-mno-popcntb' ],
+              }],
+            ],
           }],
         ],
       }],  # ppc64
@@ -527,6 +517,18 @@
           },
         },
       }],
+      ['OS=="win" and clang==1', {
+        'msvs_settings': {
+          'VCCLCompilerTool': {
+            'AdditionalOptions': [
+              # When compiling with MSVC STL, V8 can exceed the default
+              # limit of constexpr steps. Increasing it by 4 times to give
+              # it more room.
+              '/clang:-fconstexpr-steps=4194304',
+            ],
+          },
+        },
+      }],
       ['OS=="win" and v8_enable_prof==1', {
         'msvs_settings': {
           'VCLinkerTool': {
@@ -593,8 +595,13 @@
           '_ALL_SOURCE=1'],
         'conditions': [
           [ 'v8_target_arch=="ppc64"', {
-            'cflags': [ '-maix64', '-fdollars-in-identifiers', '-fno-extern-tls-init' ],
+            'cflags': [ '-maix64', '-fdollars-in-identifiers' ],
             'ldflags': [ '-maix64 -Wl,-bbigtoc' ],
+            'conditions': [
+              ['clang==0', {
+                'cflags': [ '-fno-extern-tls-init' ],
+              }],
+            ],
           }],
         ],
       }],

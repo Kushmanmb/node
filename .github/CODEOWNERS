@@ -23,8 +23,6 @@
 /onboarding.md @nodejs/tsc
 
 # nodejs.org website
-/doc/api_assets @nodejs/nodejs-website
-/doc/template.html @nodejs/nodejs-website
 /tools/doc @nodejs/web-infra
 
 # streams
@@ -75,6 +73,7 @@
 /lib/https.js @nodejs/crypto @nodejs/net @nodejs/http
 /src/node_http_common* @nodejs/http @nodejs/http2 @nodejs/net
 /src/node_http_parser.cc @nodejs/http @nodejs/net
+/lib/internal/http/* @nodejs/http @nodejs/net
 
 # http2
 
@@ -84,6 +83,15 @@
 /lib/internal/http2/* @nodejs/http2 @nodejs/net
 /src/node_http2* @nodejs/http2 @nodejs/net
 /src/node_mem* @nodejs/http2
+
+# quic
+
+/deps/ngtcp2/* @nodejs/quic
+/doc/api/quic.md @nodejs/quic
+/lib/quic.js @nodejs/quic
+/lib/internal/quic/* @nodejs/quic
+/src/quic/* @nodejs/quic
+/test/parallel/test-quic-* @nodejs/quic
 
 # modules, including loaders
 
@@ -182,6 +190,7 @@
 # Web Standards
 /lib/internal/bootstrap/web/* @nodejs/web-standards
 /lib/internal/navigator.js @nodejs/web-standards
+/lib/internal/webidl.js @nodejs/web-standards
 /test/fixtures/wpt/ @nodejs/web-standards
 /test/wpt/ @nodejs/web-standards
 
@@ -199,6 +208,7 @@
 /deps/ada @nodejs/url
 /lib/internal/url.js @nodejs/url
 /lib/url.js @nodejs/url
+/src/node_url_pattern.* @nodejs/url
 /src/node_url.* @nodejs/url
 /test/fixtures/wpt/url @nodejs/url
 
@@ -236,3 +246,11 @@
 # dev container
 /.devcontainer/* @nodejs/devcontainer
 /doc/contributing/using-devcontainer.md @nodejs/devcontainer
+
+# FFI
+/deps/libffi/ @nodejs/ffi
+/doc/api/ffi.md @nodejs/ffi
+/lib/ffi.js @nodejs/ffi
+/src/ffi/ @nodejs/ffi
+/src/node_ffi.* @nodejs/ffi
+/test/ffi/ @nodejs/ffi

@@ -28,6 +28,7 @@
 #include "src/common/globals.h"
 #include "src/execution/frame-constants.h"
 #include "src/execution/frames.h"
+#include "src/execution/isolate-data.h"
 #include "src/handles/handles.h"
 #include "src/objects/heap-object.h"
 #include "src/objects/smi.h"
@@ -165,10 +166,8 @@ class V8_EXPORT_PRIVATE MacroAssembler
   void CallBuiltin(Builtin builtin);
   void TailCallBuiltin(Builtin builtin);
 
-#ifdef V8_ENABLE_LEAPTIERING
   void LoadEntrypointFromJSDispatchTable(Register destination,
                                          Register dispatch_handle);
-#endif  // V8_ENABLE_LEAPTIERING
 
   // Load the code entry point from the Code object.
   void LoadCodeInstructionStart(Register destination, Register code_object,
@@ -196,6 +195,11 @@ class V8_EXPORT_PRIVATE MacroAssembler
 
   void LoadFeedbackVector(Register dst, Register closure, Register scratch,
                           Label* fbv_undef, Label::Distance distance);
+
+  void LoadFeedbackCell(Register dst, Register closure);
+  void LoadFeedbackVectorFromCell(Register dst, Register feedback_cell,
+                                  Register scratch, Label* fbv_undef,
+                                  Label::Distance distance);
 
   void LoadInterpreterDataBytecodeArray(Register destination,
                                         Register interpreter_data);
@@ -323,6 +327,11 @@ class V8_EXPORT_PRIVATE MacroAssembler
   void PushArray(Register array, Register size, Register scratch,
                  PushArrayOrder order = PushArrayOrder::kNormal);
 
+  MemOperand AsMemOperand(IsolateFieldId id) {
+    DCHECK(root_array_available());
+    return MemOperand(kRootRegister, IsolateData::GetOffset(id));
+  }
+
   // Operand pointing to an external reference.
   // May emit code to set up the scratch register. The operand is
   // only guaranteed to be correct as long as the scratch register
@@ -353,6 +362,37 @@ class V8_EXPORT_PRIVATE MacroAssembler
   }
   void PinsrdPreSse41(XMMRegister dst, Operand src, uint8_t imm8,
                       uint32_t* load_pc_offset);
+
+  // SIMD128
+  void I64x2Abs(XMMRegister dst, XMMRegister src, XMMRegister scratch) {
+    I64x2AbsPreAvx10(dst, src, scratch);
+  }
+  void I64x2ShrS(XMMRegister dst, XMMRegister src, uint8_t shift,
+                 XMMRegister xmm_tmp) {
+    I64x2ShrSPreAvx10(dst, src, shift, xmm_tmp);
+  }
+  void I64x2ShrS(XMMRegister dst, XMMRegister src, Register shift,
+                 XMMRegister xmm_tmp, XMMRegister xmm_shift,
+                 Register tmp_shift) {
+    I64x2ShrSPreAvx10(dst, src, shift, xmm_tmp, xmm_shift, tmp_shift);
+  }
+  void I64x2Mul(XMMRegister dst, XMMRegister lhs, XMMRegister rhs,
+                XMMRegister tmp1, XMMRegister tmp2) {
+    I64x2MulPreAvx10(dst, lhs, rhs, tmp1, tmp2);
+  }
+  void I8x16Popcnt(XMMRegister dst, XMMRegister src, Register scratch,
+                   XMMRegister tmp1, XMMRegister tmp2) {
+    I8x16PopcntPreAvx10(dst, src, tmp1, tmp2, scratch);
+  }
+  void S128Not(XMMRegister dst, XMMRegister src, XMMRegister scratch) {
+    ASM_CODE_COMMENT(this);
+    S128NotPreAvx10(dst, src, scratch);
+  }
+  void S128Select(XMMRegister dst, XMMRegister mask, XMMRegister src1,
+                  XMMRegister src2, XMMRegister scratch) {
+    ASM_CODE_COMMENT(this);
+    S128SelectPreAvx10(dst, mask, src1, src2, scratch);
+  }
 
   // Expression support
   // cvtsi2sd instruction only writes to the low 64-bit of dst register, which
@@ -495,8 +535,7 @@ class V8_EXPORT_PRIVATE MacroAssembler
 
   // Allocates an EXIT/BUILTIN_EXIT/API_CALLBACK_EXIT frame with given number
   // of slots in non-GCed area.
-  void EnterExitFrame(int extra_slots, StackFrame::Type frame_type,
-                      Register c_function);
+  void EnterExitFrame(int extra_slots, StackFrame::Type frame_type);
   void LeaveExitFrame(Register scratch);
 
   // Load the global proxy from the current context.
@@ -589,16 +628,6 @@ class V8_EXPORT_PRIVATE MacroAssembler
                             Register scratch) NOOP_UNLESS_DEBUG_CODE;
   // TODO(olivf): Rename to GenerateTailCallToUpdatedFunction.
   void GenerateTailCallToReturnedCode(Runtime::FunctionId function_id);
-#ifndef V8_ENABLE_LEAPTIERING
-  void ReplaceClosureCodeWithOptimizedCode(Register optimized_code,
-                                           Register closure, Register scratch1,
-                                           Register slot_address);
-  void LoadFeedbackVectorFlagsAndJumpIfNeedsProcessing(
-      Register flags, XMMRegister saved_feedback_vector,
-      CodeKind current_code_kind, Label* flags_need_processing);
-  void OptimizeCodeOrTailCallOptimizedCodeSlot(
-      Register flags, XMMRegister saved_feedback_vector);
-#endif  // V8_ENABLE_LEAPTIERING
 
   // Abort execution if argument is not a smi, enabled via --debug-code.
   void AssertSmi(Register object) NOOP_UNLESS_DEBUG_CODE;
@@ -606,6 +635,9 @@ class V8_EXPORT_PRIVATE MacroAssembler
 
   // Abort execution if argument is a smi, enabled via --debug-code.
   void AssertNotSmi(Register object) NOOP_UNLESS_DEBUG_CODE;
+
+  // Abort execution if argument is not a Map, enabled via --debug-code.
+  void AssertMap(Register object, Register scratch) NOOP_UNLESS_DEBUG_CODE;
 
   // Abort execution if argument is not a JSFunction, enabled via --debug-code.
   void AssertFunction(Register object, Register scratch) NOOP_UNLESS_DEBUG_CODE;
@@ -754,7 +786,8 @@ void CallApiFunctionAndReturn(MacroAssembler* masm, bool with_profiling,
                               ExternalReference thunk_ref, Register thunk_arg,
                               int slots_to_drop_on_return,
                               MemOperand* argc_operand,
-                              MemOperand return_value_operand);
+                              MemOperand return_value_operand,
+                              bool handle_interceptor_result);
 
 #define ACCESS_MASM(masm) masm->
 

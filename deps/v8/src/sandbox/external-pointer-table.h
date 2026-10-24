@@ -9,7 +9,6 @@
 #include "src/base/atomicops.h"
 #include "src/base/memory.h"
 #include "src/common/globals.h"
-#include "src/sandbox/check.h"
 #include "src/sandbox/compactible-external-entity-table.h"
 #include "src/sandbox/tagged-payload.h"
 #include "src/utils/allocation.h"
@@ -38,8 +37,6 @@ class ReadOnlyArtifacts;
  *    algorithm overview for more details about these entries.
  */
 struct ExternalPointerTableEntry {
-  enum class EvacuateMarkMode { kTransferMark, kLeaveUnmarked, kClearMark };
-
   // Make this entry an external pointer entry containing the given pointer
   // tagged with the given tag.
   inline void MakeExternalPointerEntry(Address value, ExternalPointerTag tag,
@@ -84,7 +81,7 @@ struct ExternalPointerTableEntry {
   // called even when the entry is not a freelist entry. However, the result
   // is only valid if this is a freelist entry. This behaviour is required
   // for efficient entry allocation, see TryAllocateEntryFromFreelist.
-  inline uint32_t GetNextFreelistEntryIndex() const;
+  inline std::optional<uint32_t> GetNextFreelistEntryIndex() const;
 
   // Make this entry an evacuation entry containing the address of the handle to
   // the entry being evacuated.
@@ -102,104 +99,33 @@ struct ExternalPointerTableEntry {
   // The source entry remains valid.
   inline void CopyFrom(const ExternalPointerTableEntry& src);
 
-  // Mark this entry as alive during table garbage collection.
-  inline void Mark();
+  // Mark this entry as alive during table garbage collection. Returns true if
+  // the entry transitioned from un-marked to marked, and false otherwise.
+  inline bool Mark(ExternalPointerTagRange tag_range);
 
   static constexpr bool IsWriteProtected = false;
 
  private:
+  friend struct ExternalEntityTableCompactionTraits<ExternalPointerTableEntry>;
+  friend class CompactibleExternalEntityTable<
+      ExternalPointerTableEntry, kExternalPointerTableReservationSize>;
   friend class ExternalPointerTable;
+  friend class ExternalPointerTableEntryPrinter;
 
-  // TODO(saelo): generalize this payload struct and reuse it for all other
-  // pointer table that use type tags. For that, we probably will have to make
-  // this more flexible, allowing shifts and masks to be applied to both the
-  // tag- and payload bits since the tables store the tag bits differently.
-  struct Payload {
-    Payload(Address pointer, ExternalPointerTag tag)
-        : encoded_word_(Tag(pointer, tag)) {}
-
-    static Address Tag(Address pointer, ExternalPointerTag tag) {
-      DCHECK_LE(tag, kLastExternalPointerTag);
-      return pointer | (static_cast<Address>(tag) << kExternalPointerTagShift);
-    }
-
-    static bool CheckTag(Address content, ExternalPointerTagRange tag_range) {
-      // TODO(saelo): use well-known null entries per type tag instead of a
-      // generic null entry. Then this check can be removed.
-      if (ExternalPointerCanBeEmpty(tag_range) && !content) {
-        return true;
-      }
-
-      ExternalPointerTag tag = static_cast<ExternalPointerTag>(
-          (content & kExternalPointerTagMask) >> kExternalPointerTagShift);
-      return tag_range.Contains(tag);
-    }
-
-    Address Untag(ExternalPointerTagRange tag_range) const {
-      Address content = encoded_word_;
-      SBXCHECK(CheckTag(content, tag_range));
-      return content & kExternalPointerPayloadMask;
-    }
-
-    Address Untag(ExternalPointerTag tag) const {
-      return Untag(ExternalPointerTagRange(tag, tag));
-    }
-
-    bool IsTaggedWithTagIn(ExternalPointerTagRange tag_range) const {
-      return CheckTag(encoded_word_, tag_range);
-    }
-
-    bool IsTaggedWith(ExternalPointerTag tag) const {
-      return IsTaggedWithTagIn(ExternalPointerTagRange(tag));
-    }
-
-    void SetMarkBit() { encoded_word_ |= kExternalPointerMarkBit; }
-
-    void ClearMarkBit() { encoded_word_ &= ~kExternalPointerMarkBit; }
-
-    bool HasMarkBitSet() const {
-      return encoded_word_ & kExternalPointerMarkBit;
-    }
-
-    uint32_t ExtractFreelistLink() const {
-      return static_cast<uint32_t>(encoded_word_);
-    }
-
-    ExternalPointerTag ExtractTag() const {
-      return static_cast<ExternalPointerTag>(
-          (encoded_word_ & kExternalPointerTagMask) >>
-          kExternalPointerTagShift);
-    }
-
-    bool ContainsFreelistLink() const {
-      return IsTaggedWith(kExternalPointerFreeEntryTag);
-    }
-
-    bool ContainsEvacuationEntry() const {
-      return IsTaggedWith(kExternalPointerEvacuationEntryTag);
-    }
-
-    Address ExtractEvacuationEntryHandleLocation() const {
-      return Untag(kExternalPointerEvacuationEntryTag);
-    }
-
-    bool ContainsPointer() const {
-      return !ContainsFreelistLink() && !ContainsEvacuationEntry();
-    }
-
-    bool operator==(Payload other) const {
-      return encoded_word_ == other.encoded_word_;
-    }
-
-    bool operator!=(Payload other) const {
-      return encoded_word_ != other.encoded_word_;
-    }
-
-   private:
-    Address encoded_word_;
+  struct ExternalPointerTablePayloadTaggingScheme {
+    using TagType = ExternalPointerTag;
+    static constexpr uint64_t kMarkBit = kExternalPointerMarkBit;
+    static constexpr uint64_t kTagShift = kExternalPointerTagShift;
+    static constexpr uint64_t kTagMask = kExternalPointerTagMask;
+    static constexpr uint64_t kPayloadMask = kExternalPointerPayloadMask;
+    static constexpr uint64_t kPayloadShift = 0;
+    static constexpr TagType kFreeEntryTag = kExternalPointerFreeEntryTag;
+    static constexpr TagType kEvacuationEntryTag =
+        kExternalPointerEvacuationEntryTag;
   };
+  using Payload = TaggedPayload<ExternalPointerTablePayloadTaggingScheme>;
 
-  inline Payload GetRawPayload() {
+  inline Payload GetRawPayload() const {
     return payload_.load(std::memory_order_relaxed);
   }
   inline void SetRawPayload(Payload new_payload) {
@@ -242,6 +168,23 @@ static_assert(sizeof(ExternalPointerTableEntry) == 16);
 //  We expect ExternalPointerTable entries to consist of a single 64-bit word.
 static_assert(sizeof(ExternalPointerTableEntry) == 8);
 #endif
+
+/**
+ * Trait used to implement table compaction for ExternalPointerTableEntry.
+ */
+template <>
+struct ExternalEntityTableCompactionTraits<ExternalPointerTableEntry> {
+  using Handle = ExternalPointerHandle;
+  static constexpr Handle kNullHandle = kNullExternalPointerHandle;
+  static bool IsValidHandle(Handle handle);
+  static uint32_t HandleToIndex(Handle handle);
+  static Handle IndexToHandle(uint32_t index);
+  template <typename Table>
+  static void FreeEntry(Table* base_table, uint32_t index);
+  template <typename Table>
+  static void RelocateAuxiliaryEntryData(Table* base_table, uint32_t old_index,
+                                         uint32_t new_index);
+};
 
 /**
  * A table storing pointers to objects outside the V8 heap.
@@ -318,15 +261,13 @@ class V8_EXPORT_PRIVATE ExternalPointerTable
 
 #if defined(LEAK_SANITIZER)
   //  When LSan is active, we use "fat" entries, see above.
-  static_assert(kMaxExternalPointers == kMaxCapacity * 2);
+  static_assert(kMaxExternalPointers == Base::kMaxCapacity * 2);
 #else
-  static_assert(kMaxExternalPointers == kMaxCapacity);
+  static_assert(kMaxExternalPointers == Base::kMaxCapacity);
 #endif
-  static_assert(kSupportsCompaction);
+  static_assert(Base::kSupportsCompaction);
 
  public:
-  using EvacuateMarkMode = ExternalPointerTableEntry::EvacuateMarkMode;
-
   ExternalPointerTable() = default;
   ExternalPointerTable(const ExternalPointerTable&) = delete;
   ExternalPointerTable& operator=(const ExternalPointerTable&) = delete;
@@ -402,16 +343,15 @@ class V8_EXPORT_PRIVATE ExternalPointerTable
   //
   // This method is atomic and can be called from background threads.
   inline void Mark(Space* space, ExternalPointerHandle handle,
-                   Address handle_location);
+                   Address handle_location, ExternalPointerTagRange tag_range);
 
   // Evacuate the specified entry from one space to another, updating the handle
-  // location in place.
-  //
-  // This method is not atomic and can be called only when the mutator is
-  // paused.
-  inline void Evacuate(Space* from_space, Space* to_space,
-                       ExternalPointerHandle handle, Address handle_location,
-                       EvacuateMarkMode mode);
+  // location in place and returning the valid evacuated handle.
+  inline ExternalPointerHandle Evacuate(Space* from_space, Space* to_space,
+                                        ExternalPointerHandle handle,
+                                        Address handle_location,
+                                        EvacuateMarkMode mode,
+                                        ExternalPointerTagRange tag_range);
 
   // Evacuate all segments from from_space to to_space, leaving from_space empty
   // with an empty free list.  Then free unmarked entries, finishing compaction
@@ -435,6 +375,14 @@ class V8_EXPORT_PRIVATE ExternalPointerTable
   uint32_t Sweep(Space* space, Counters* counters);
 
   inline bool Contains(Space* space, ExternalPointerHandle handle) const;
+
+  // Verifies that all entries in the given space are valid.
+  //
+  // In practice, this means that every active entry must point to a valid
+  // (e.g. not freed or corrupted) object of the expected type. As a general
+  // rule, the table must be in a consistent state (and so pass verification)
+  // whenever we can execute JS or Wasm code.
+  void Verify(Isolate* isolate, Space* space);
 
   // A resource outside of the V8 heap whose lifetime is tied to something
   // inside the V8 heap. This class makes that relationship explicit.
@@ -468,6 +416,10 @@ class V8_EXPORT_PRIVATE ExternalPointerTable
   };
 
  private:
+  friend struct ExternalEntityTableCompactionTraits<ExternalPointerTableEntry>;
+  friend class CompactibleExternalEntityTable<
+      ExternalPointerTableEntry, kExternalPointerTableReservationSize>;
+
   static inline bool IsValidHandle(ExternalPointerHandle handle);
   static inline uint32_t HandleToIndex(ExternalPointerHandle handle);
   static inline ExternalPointerHandle IndexToHandle(uint32_t index);
@@ -475,11 +427,26 @@ class V8_EXPORT_PRIVATE ExternalPointerTable
   inline void TakeOwnershipOfManagedResourceIfNecessary(
       Address value, ExternalPointerHandle handle, ExternalPointerTag tag);
   inline void FreeManagedResourceIfPresent(uint32_t entry_index);
-
-  void ResolveEvacuationEntryDuringSweeping(
-      uint32_t index, ExternalPointerHandle* handle_location,
-      uint32_t start_of_evacuation_area);
+  inline void RelocateManagedResourceIfPresent(uint32_t old_index,
+                                               uint32_t new_index);
 };
+
+#ifdef OBJECT_PRINT
+
+class ExternalPointerTableEntryPrinter {
+ public:
+  static void PrintHeader(const char* space_name);
+  static void PrintIfInUse(
+      ExternalPointerHandle handle, const ExternalPointerTableEntry& entry,
+      std::function<bool(ExternalPointerTag)> entry_callback);
+  static void PrintFooter();
+};
+
+template <>
+class TableEntryPrinter<ExternalPointerTableEntry>
+    : public ExternalPointerTableEntryPrinter {};
+
+#endif  // OBJECT_PRINT
 
 }  // namespace internal
 }  // namespace v8

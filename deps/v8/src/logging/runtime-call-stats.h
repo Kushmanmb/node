@@ -195,12 +195,13 @@ namespace v8::internal {
   V(Uint8ClampedArray_New)                                 \
   V(UnboundModuleScript_GetSourceMappingURL)               \
   V(UnboundModuleScript_GetSourceURL)                      \
+  V(UnboundModuleScript_ScriptId)                          \
   V(UnboundScript_GetColumnNumber)                         \
-  V(UnboundScript_GetId)                                   \
   V(UnboundScript_GetLineNumber)                           \
   V(UnboundScript_GetName)                                 \
   V(UnboundScript_GetSourceMappingURL)                     \
   V(UnboundScript_GetSourceURL)                            \
+  V(UnboundScript_ScriptId)                                \
   V(ValueDeserializer_ReadHeader)                          \
   V(ValueDeserializer_ReadValue)                           \
   V(ValueSerializer_WriteValue)                            \
@@ -251,6 +252,7 @@ namespace v8::internal {
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, EscapeAnalysis)                    \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, FinalizeCode)                      \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, FrameElision)                      \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, BlockPositioning)                  \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, GenericLowering)                   \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, Inlining)                          \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, JSWasmInlining)                    \
@@ -269,13 +271,22 @@ namespace v8::internal {
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, PrintTurboshaftGraph)              \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, ResolveControlFlow)                \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, ResolvePhis)                       \
-  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize,                                    \
-                              ScheduledEffectControlLinearization)            \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, ScheduledMachineLowering)          \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, Scheduling)                        \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, SelectInstructions)                \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, SimplifiedLowering)                \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TraceScheduleAndVerify)            \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurbolevMaglevGraphBuilding)       \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurbolevInlining)                  \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurbolevTruncation)                \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurbolevPrePhiUntagging)           \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurbolevPhiUntagging)              \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurbolevLoopPeeling)               \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurbolevEscapeAnalysis)            \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurbolevRangeAnalysis)             \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurbolevPostOptimizer)             \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurbolevAnyUseMarking)             \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurbolevDeadNodeSweeping)          \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftBlockInstrumentation)    \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftBuildGraph)              \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize,                                    \
@@ -295,16 +306,18 @@ namespace v8::internal {
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftInstructionSelection)    \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftInt64Lowering)           \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftLateOptimization)        \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftLoopOptimization)        \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftLoopPeeling)             \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftLoopUnrolling)           \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftMachineLowering)         \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftRandomRescheduling)      \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftTurbolevGraphBuilding)   \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize,                                    \
                               TurboshaftSimplificationAndNormalization)       \
-  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftOptimize)                \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftMemoryOptimization)      \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftProfileApplication)      \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftSpecialRPOScheduling)    \
-  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftStoreStoreElimination)   \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftLoadElimination)         \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftTagUntagLowering)        \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftTypeAssertions)          \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, TurboshaftTypedOptimizations)      \
@@ -418,7 +431,6 @@ namespace v8::internal {
   V(OptimizeConcurrentPrepare)                 \
   V(OptimizeFinalizePipelineJob)               \
   V(OptimizeHeapBrokerInitialization)          \
-  V(OptimizeRevectorizer)                      \
   V(OptimizeSerialization)                     \
   V(OptimizeSerializeMetadata)                 \
   V(OptimizeSynchronous)                       \
@@ -467,10 +479,10 @@ namespace v8::internal {
   V(LoadIC_LoadIntegerIndexedExoticDH)            \
   V(LoadIC_LoadInterceptorDH)                     \
   V(LoadIC_LoadInterceptorFromPrototypeDH)        \
+  V(LoadIC_LoadInterceptorNonMaskingDH)           \
   V(LoadIC_LoadNativeDataPropertyDH)              \
   V(LoadIC_LoadNativeDataPropertyFromPrototypeDH) \
   V(LoadIC_LoadNonexistentDH)                     \
-  V(LoadIC_LoadNonMaskingInterceptorDH)           \
   V(LoadIC_LoadNormalDH)                          \
   V(LoadIC_LoadNormalFromPrototypeDH)             \
   V(LoadIC_NonReceiver)                           \
@@ -488,7 +500,10 @@ namespace v8::internal {
   V(StoreIC_StoreFieldDH)                         \
   V(StoreIC_StoreGlobalDH)                        \
   V(StoreIC_StoreGlobalTransitionDH)              \
-  V(StoreIC_StoreInterceptorStub)                 \
+  V(StoreIC_StoreInterceptorDH)                   \
+  V(StoreIC_StoreInterceptorNonMaskingDH)         \
+  V(StoreIC_StoreInterceptorSlowDH)               \
+  V(StoreIC_StoreInterceptorThroughPrototypeDH)   \
   V(StoreIC_StoreNativeDataPropertyDH)            \
   V(StoreIC_StoreNativeDataPropertyOnPrototypeDH) \
   V(StoreIC_StoreNormalDH)                        \

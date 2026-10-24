@@ -6,15 +6,23 @@
 
 #include <vector>
 
+#include "include/libplatform/libplatform.h"
 #include "src/base/virtual-address-space.h"
+#include "src/init/v8.h"
 #include "test/unittests/test-utils.h"
+
+#ifdef V8_OS_LINUX
+#include "src/base/platform/platform-linux.h"
+#endif
 
 #ifdef V8_ENABLE_SANDBOX
 
 namespace v8 {
 namespace internal {
 
-TEST(SandboxTest, Initialization) {
+class SandboxTest : public v8::TestWithPlatform {};
+
+TEST_F(SandboxTest, Initialization) {
   base::VirtualAddressSpace vas;
 
   Sandbox sandbox;
@@ -23,7 +31,7 @@ TEST(SandboxTest, Initialization) {
   EXPECT_FALSE(sandbox.is_partially_reserved());
   EXPECT_EQ(sandbox.size(), 0UL);
 
-  sandbox.Initialize(&vas);
+  sandbox.Initialize(platform(), &vas);
 
   EXPECT_TRUE(sandbox.is_initialized());
   EXPECT_NE(sandbox.base(), 0UL);
@@ -34,7 +42,7 @@ TEST(SandboxTest, Initialization) {
   EXPECT_FALSE(sandbox.is_initialized());
 }
 
-TEST(SandboxTest, InitializationWithSize) {
+TEST_F(SandboxTest, InitializationWithSize) {
   base::VirtualAddressSpace vas;
   // This test only works if virtual memory subspaces can be allocated.
   if (!vas.CanAllocateSubspaces()) return;
@@ -42,7 +50,7 @@ TEST(SandboxTest, InitializationWithSize) {
   Sandbox sandbox;
   size_t size = 8ULL * GB;
   const bool use_guard_regions = false;
-  sandbox.Initialize(&vas, size, use_guard_regions);
+  sandbox.Initialize(platform(), &vas, size, use_guard_regions);
 
   EXPECT_TRUE(sandbox.is_initialized());
   EXPECT_FALSE(sandbox.is_partially_reserved());
@@ -51,7 +59,7 @@ TEST(SandboxTest, InitializationWithSize) {
   sandbox.TearDown();
 }
 
-TEST(SandboxTest, PartiallyReservedSandbox) {
+TEST_F(SandboxTest, PartiallyReservedSandbox) {
   base::VirtualAddressSpace vas;
   Sandbox sandbox;
   // Total size of the sandbox.
@@ -59,8 +67,8 @@ TEST(SandboxTest, PartiallyReservedSandbox) {
   // Size of the virtual memory that is actually reserved at the start of the
   // sandbox.
   size_t reserved_size = 2 * vas.allocation_granularity();
-  EXPECT_TRUE(
-      sandbox.InitializeAsPartiallyReservedSandbox(&vas, size, reserved_size));
+  EXPECT_TRUE(sandbox.InitializeAsPartiallyReservedSandbox(
+      platform(), &vas, size, reserved_size));
 
   EXPECT_TRUE(sandbox.is_initialized());
   EXPECT_TRUE(sandbox.is_partially_reserved());
@@ -78,10 +86,10 @@ TEST(SandboxTest, PartiallyReservedSandbox) {
   EXPECT_FALSE(sandbox.is_initialized());
 }
 
-TEST(SandboxTest, Contains) {
+TEST_F(SandboxTest, Contains) {
   base::VirtualAddressSpace vas;
   Sandbox sandbox;
-  sandbox.Initialize(&vas);
+  sandbox.Initialize(platform(), &vas);
 
   if (sandbox.is_partially_reserved()) {
     // If we couldn't create a "full" sandbox, this test will fail, so skip it.
@@ -131,10 +139,10 @@ TEST(SandboxTest, Contains) {
   sandbox.TearDown();
 }
 
-TEST(SandboxTest, PageAllocation) {
+TEST_F(SandboxTest, PageAllocation) {
   base::VirtualAddressSpace root_vas;
   Sandbox sandbox;
-  sandbox.Initialize(&root_vas);
+  sandbox.Initialize(platform(), &root_vas);
 
   const size_t kAllocatinSizesInPages[] = {1, 1, 2, 3, 5, 8, 13, 21, 34};
   constexpr int kNumAllocations = arraysize(kAllocatinSizesInPages);
@@ -159,6 +167,38 @@ TEST(SandboxTest, PageAllocation) {
 
   sandbox.TearDown();
 }
+
+#ifdef V8_OS_LINUX
+TEST_F(SandboxTest, SandboxName) {
+  base::VirtualAddressSpace vas;
+  // This test only works if virtual memory subspaces can be allocated.
+  if (!vas.CanAllocateSubspaces()) GTEST_SKIP();
+
+  Sandbox sandbox;
+  sandbox.Initialize(platform(), &vas);
+
+  base::SignalSafeMapsParser parser;
+  ASSERT_TRUE(parser.IsValid());
+
+  // Check if the system supports naming.
+  auto control_subspace = vas.AllocateSubspace(
+      0, vas.allocation_granularity(), vas.allocation_granularity(),
+      PagePermissions::kReadWrite, std::nullopt, std::nullopt);
+  if (!control_subspace->SetName("test-name")) GTEST_SKIP();
+
+  // If so, we expect the sandbox mapping to be named.
+  bool found_sandbox_mapping = false;
+  while (auto entry = parser.Next()) {
+    if (strstr(entry->pathname, Sandbox::kSandboxAddressSpaceName)) {
+      found_sandbox_mapping = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found_sandbox_mapping);
+
+  sandbox.TearDown();
+}
+#endif  // V8_OS_LINUX
 
 }  // namespace internal
 }  // namespace v8

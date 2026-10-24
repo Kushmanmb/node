@@ -22,6 +22,7 @@ struct _EXCEPTION_POINTERS;
 
 namespace v8 {
 
+class ArrayBuffer;
 template <typename T>
 class FunctionCallbackInfo;
 class Isolate;
@@ -260,6 +261,15 @@ enum class CrashKeyId {
 
 using AddCrashKeyCallback = void (*)(CrashKeyId id, const std::string& value);
 
+// --- CrashKeyString Callbacks ---
+using CrashKey = void*;
+enum class CrashKeySize { Size32, Size64, Size256, Size1024 };
+
+using AllocateCrashKeyStringCallback =
+    std::function<CrashKey(const char key[], CrashKeySize size)>;
+using SetCrashKeyStringCallback =
+    std::function<void(CrashKey key, const std::string_view value)>;
+
 // --- Enter/Leave Script Callback ---
 using BeforeCallEnteredCallback = void (*)(Isolate*);
 using CallCompletedCallback = void (*)(Isolate*);
@@ -332,6 +342,10 @@ using WasmCustomDescriptorsEnabledCallback = bool (*)(Local<Context> context);
 // --- Callback for checking if the SharedArrayBuffer constructor is enabled ---
 using SharedArrayBufferConstructorEnabledCallback =
     bool (*)(Local<Context> context);
+
+// --- Callback for getting high resolution timestamps in Temporal ---
+using TemporalHostSystemUTCEpochNanosecondsCallback =
+    int64_t (*)(Local<Context> context);
 
 /**
  * Import phases in import requests.
@@ -456,6 +470,13 @@ using HostCreateShadowRealmContextCallback =
  */
 using IsJSApiWrapperNativeErrorCallback = bool (*)(Isolate* isolate,
                                                    Local<Object> obj);
+
+/**
+ * ArrayBufferDetachCallback is called when an ArrayBuffer wrapping an embedder
+ * object is detached.
+ */
+using ArrayBufferDetachCallback = void (*)(Isolate* isolate,
+                                           Local<ArrayBuffer> buffer);
 
 /**
  * PrepareStackTraceCallback is called when the stack property of an error is

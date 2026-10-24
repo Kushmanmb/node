@@ -31,6 +31,7 @@
 /tags
 /tags.*
 /doc/api.xml
+/docs/
 /node
 /node_g
 /gon-config.json
@@ -102,6 +103,11 @@ _UpgradeReport_Files/
 tools/*/*.i
 tools/*/*.i.tmp
 
+# === Rules for pgo artifacts ===
+*.profdata
+*.profraw
+*.gcda
+
 # === Rules for release artifacts ===
 /*.tar.*
 /*.pkg
@@ -115,11 +121,16 @@ tools/*/*.i.tmp
 /tools/eslint/node_modules
 /tools/lint-md/node_modules
 
+# === Rules for tools/perfetto ===
+/tools/perfetto/trace_processor_shell
+/tools/perfetto/trace_processor_shell.exe
+
 # === Rules for test artifacts ===
 /*.tap
 /*.xml
 /v8*-tap.json
 /node_trace.*.log
+/node_trace.*.pftrace
 # coverage related
 /gcovr
 /build
@@ -159,6 +170,10 @@ CTestTestfile.cmake
 cmake_install.cmake
 install_manifest.txt
 *.cbp
+
+# === Rules for AI assistants ===
+CLAUDE.md
+AGENTS.override.md
 
 # === Rules for sensitive files ===
 # Environment files with secrets and credentials

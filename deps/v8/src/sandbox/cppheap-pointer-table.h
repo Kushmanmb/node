@@ -17,8 +17,7 @@
 
 #ifdef V8_COMPRESS_POINTERS
 
-namespace v8 {
-namespace internal {
+namespace v8::internal {
 
 class Isolate;
 class Counters;
@@ -68,7 +67,7 @@ struct CppHeapPointerTableEntry {
   // called even when the entry is not a freelist entry. However, the result
   // is only valid if this is a freelist entry. This behaviour is required
   // for efficient entry allocation, see TryAllocateEntryFromFreelist.
-  inline uint32_t GetNextFreelistEntryIndex() const;
+  inline std::optional<uint32_t> GetNextFreelistEntryIndex() const;
 
   // Make this entry an evacuation entry containing the address of the handle to
   // the entry being evacuated.
@@ -77,111 +76,41 @@ struct CppHeapPointerTableEntry {
   // Returns true if this entry contains an evacuation entry.
   inline bool HasEvacuationEntry() const;
 
+  // Copy the content of the provided entry into this entry.
+  inline void CopyFrom(const CppHeapPointerTableEntry& other);
+
   // Move the content of this entry into the provided entry, possibly clearing
   // the marking bit. Used during table compaction and during promotion.
   // Invalidates the source entry.
-  inline void Evacuate(CppHeapPointerTableEntry& dest);
+  inline void Evacuate(CppHeapPointerTableEntry& dest, EvacuateMarkMode mode);
 
-  // Mark this entry as alive during table garbage collection.
-  inline void Mark();
+  // Mark this entry as alive during table garbage collection. Returns true if
+  // the entry transitioned from un-marked to marked, and false otherwise.
+  inline bool Mark();
 
   static constexpr bool IsWriteProtected = false;
 
  private:
+  friend struct ExternalEntityTableCompactionTraits<CppHeapPointerTableEntry>;
+  friend class CompactibleExternalEntityTable<
+      CppHeapPointerTableEntry, kCppHeapPointerTableReservationSize>;
   friend class CppHeapPointerTable;
+  friend class CppHeapPointerTableEntryPrinter;
 
-  struct Payload {
-    Payload(Address pointer, CppHeapPointerTag tag)
-        : encoded_word_(Tag(pointer, tag)) {}
-
-    Address Untag(CppHeapPointerTagRange tag_range) const {
-      Address content = encoded_word_;
-      if (V8_LIKELY(tag_range.CheckTagOf(content))) {
-        content >>= kCppHeapPointerPayloadShift;
-      } else {
-        // If the type check failed, we simply return nullptr here. That way:
-        //  1. The null handle always results in nullptr being returned here,
-        //     which is a desired property. Otherwise, we may need an explicit
-        //     check for the null handle in the caller, and therefore an
-        //     additional branch. This works because the 0th entry of the table
-        //     always contains nullptr tagged with the null tag (i.e. an
-        //     all-zeros entry). As such, regardless of whether the type check
-        //     succeeds, the result will always be nullptr.
-        //  2. The returned pointer is guaranteed to crash even on platforms
-        //     with top byte ignore (TBI), such as Arm64. The alternative would
-        //     be to simply return the original entry with the left-shifted
-        //     payload. However, due to TBI, an access to that may not always
-        //     result in a crash (specifically, if the second most significant
-        //     byte happens to be zero). In addition, there shouldn't be a
-        //     difference on Arm64 between returning nullptr or the original
-        //     entry, since it will simply compile to a `csel x0, x8, xzr, lo`
-        //     instead of a `csel x0, x10, x8, lo` instruction.
-        content = 0;
-      }
-      return content;
-    }
-
-    Address Untag(CppHeapPointerTag tag) const {
-      return Untag(CppHeapPointerTagRange(tag, tag));
-    }
-
-    static Address Tag(Address pointer, CppHeapPointerTag tag) {
-      return (pointer << kCppHeapPointerPayloadShift) |
-             (static_cast<uint16_t>(tag) << kCppHeapPointerTagShift);
-    }
-
-    bool IsTaggedWithTagIn(CppHeapPointerTagRange tag_range) const {
-      return tag_range.CheckTagOf(encoded_word_);
-    }
-
-    bool IsTaggedWith(CppHeapPointerTag tag) const {
-      return IsTaggedWithTagIn(CppHeapPointerTagRange(tag, tag));
-    }
-
-    void SetMarkBit() { encoded_word_ |= kCppHeapPointerMarkBit; }
-
-    void ClearMarkBit() { encoded_word_ &= ~kCppHeapPointerMarkBit; }
-
-    bool HasMarkBitSet() const {
-      return encoded_word_ & kCppHeapPointerMarkBit;
-    }
-
-    uint32_t ExtractFreelistLink() const {
-      return static_cast<uint32_t>(encoded_word_ >>
-                                   kCppHeapPointerPayloadShift);
-    }
-
-    CppHeapPointerTag ExtractTag() const { UNREACHABLE(); }
-
-    bool ContainsFreelistLink() const {
-      return IsTaggedWith(CppHeapPointerTag::kFreeEntryTag);
-    }
-
-    bool ContainsEvacuationEntry() const {
-      return IsTaggedWith(CppHeapPointerTag::kEvacuationEntryTag);
-    }
-
-    Address ExtractEvacuationEntryHandleLocation() const {
-      return Untag(CppHeapPointerTag::kEvacuationEntryTag);
-    }
-
-    bool ContainsPointer() const {
-      return !ContainsFreelistLink() && !ContainsEvacuationEntry();
-    }
-
-    bool operator==(Payload other) const {
-      return encoded_word_ == other.encoded_word_;
-    }
-
-    bool operator!=(Payload other) const {
-      return encoded_word_ != other.encoded_word_;
-    }
-
-   private:
-    Address encoded_word_;
+  struct CppHeapPointerTablePayloadTaggingScheme {
+    using TagType = CppHeapPointerTag;
+    static constexpr uint64_t kMarkBit = kCppHeapPointerMarkBit;
+    static constexpr uint64_t kTagShift = kCppHeapPointerTagShift;
+    static constexpr uint64_t kTagMask = kCppHeapPointerTagMask;
+    static constexpr uint64_t kPayloadShift = kCppHeapPointerPayloadShift;
+    static constexpr uint64_t kPayloadMask = ~0ULL;
+    static constexpr TagType kFreeEntryTag = CppHeapPointerTag::kFreeEntryTag;
+    static constexpr TagType kEvacuationEntryTag =
+        CppHeapPointerTag::kEvacuationEntryTag;
   };
+  using Payload = TaggedPayload<CppHeapPointerTablePayloadTaggingScheme>;
 
-  inline Payload GetRawPayload() {
+  inline Payload GetRawPayload() const {
     return payload_.load(std::memory_order_relaxed);
   }
   inline void SetRawPayload(Payload new_payload) {
@@ -195,6 +124,23 @@ struct CppHeapPointerTableEntry {
 
 //  We expect CppHeapPointerTable entries to consist of a single 64-bit word.
 static_assert(sizeof(CppHeapPointerTableEntry) == 8);
+
+/**
+ * Trait used to implement table compaction for CppHeapPointerTableEntry.
+ */
+template <>
+struct ExternalEntityTableCompactionTraits<CppHeapPointerTableEntry> {
+  using Handle = CppHeapPointerHandle;
+  static constexpr Handle kNullHandle = kNullCppHeapPointerHandle;
+  static bool IsValidHandle(Handle handle);
+  static uint32_t HandleToIndex(Handle handle);
+  static Handle IndexToHandle(uint32_t index);
+  template <typename Table>
+  static void FreeEntry(Table* base_table, uint32_t index);
+  template <typename Table>
+  static void RelocateAuxiliaryEntryData(Table* base_table, uint32_t old_index,
+                                         uint32_t new_index);
+};
 
 /**
  * A table storing pointers to objects in the CppHeap
@@ -215,14 +161,17 @@ class V8_EXPORT_PRIVATE CppHeapPointerTable
   using Base =
       CompactibleExternalEntityTable<CppHeapPointerTableEntry,
                                      kCppHeapPointerTableReservationSize>;
-  static_assert(kMaxCppHeapPointers == kMaxCapacity);
+  static_assert(kMaxCppHeapPointers == Base::kMaxCapacity);
 
  public:
   CppHeapPointerTable() = default;
   CppHeapPointerTable(const CppHeapPointerTable&) = delete;
   CppHeapPointerTable& operator=(const CppHeapPointerTable&) = delete;
 
-  using Space = Base::Space;
+  struct Space : public Base::Space {
+   public:
+    inline void NotifyCppHeapPointerFieldInvalidated(Address field_address);
+  };
 
   // Retrieves the entry referenced by the given handle.
   //
@@ -246,6 +195,12 @@ class V8_EXPORT_PRIVATE CppHeapPointerTable
                                                          Address initial_value,
                                                          CppHeapPointerTag tag);
 
+  // Duplicates an entry, returning a handle to the new entry.
+  //
+  // This method is atomic and can be called from background threads.
+  inline CppHeapPointerHandle DuplicateEntry(Space* space,
+                                             CppHeapPointerHandle handle);
+
   // Marks the specified entry as alive.
   //
   // If the space to which the entry belongs is currently being compacted, this
@@ -261,18 +216,42 @@ class V8_EXPORT_PRIVATE CppHeapPointerTable
 
   inline bool Contains(Space* space, CppHeapPointerHandle handle) const;
 
+  // Verifies that all entries in the given space are valid.
+  //
+  // In practice, this means that every active entry must point to a valid
+  // (e.g. not freed or corrupted) object of the expected type. As a general
+  // rule, the table must be in a consistent state (and so pass verification)
+  // whenever we can execute JS or Wasm code.
+  void Verify(Isolate* isolate, Space* space);
+
  private:
+  friend struct ExternalEntityTableCompactionTraits<CppHeapPointerTableEntry>;
+  friend class CompactibleExternalEntityTable<
+      CppHeapPointerTableEntry, kCppHeapPointerTableReservationSize>;
+
   static inline bool IsValidHandle(CppHeapPointerHandle handle);
   static inline uint32_t HandleToIndex(CppHeapPointerHandle handle);
   static inline CppHeapPointerHandle IndexToHandle(uint32_t index);
-
-  void ResolveEvacuationEntryDuringSweeping(
-      uint32_t index, CppHeapPointerHandle* handle_location,
-      uint32_t start_of_evacuation_area);
 };
 
-}  // namespace internal
-}  // namespace v8
+#ifdef OBJECT_PRINT
+
+class CppHeapPointerTableEntryPrinter {
+ public:
+  static void PrintHeader(const char* space_name);
+  static void PrintIfInUse(
+      CppHeapPointerHandle handle, const CppHeapPointerTableEntry& entry,
+      std::function<bool(CppHeapPointerTag)> entry_callback);
+  static void PrintFooter();
+};
+
+template <>
+class TableEntryPrinter<CppHeapPointerTableEntry>
+    : public CppHeapPointerTableEntryPrinter {};
+
+#endif  // OBJECT_PRINT
+
+}  // namespace v8::internal
 
 #endif  // V8_COMPRESS_POINTERS
 

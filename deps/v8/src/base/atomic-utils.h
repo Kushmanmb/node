@@ -112,8 +112,15 @@ class AsAtomicImpl {
   template <typename T>
   static T SeqCst_Swap(T* addr, std::remove_reference_t<T> new_value) {
     static_assert(sizeof(T) <= sizeof(AtomicStorageType));
-    return base::SeqCst_AtomicExchange(
-        to_storage_addr(addr), cast_helper<T>::to_storage_type(new_value));
+    return cast_helper<T>::to_return_type(base::SeqCst_AtomicExchange(
+        to_storage_addr(addr), cast_helper<T>::to_storage_type(new_value)));
+  }
+
+  template <typename T>
+  static T Relaxed_Swap(T* addr, std::remove_reference_t<T> new_value) {
+    static_assert(sizeof(T) <= sizeof(AtomicStorageType));
+    return cast_helper<T>::to_return_type(base::Relaxed_AtomicExchange(
+        to_storage_addr(addr), cast_helper<T>::to_storage_type(new_value)));
   }
 
   template <typename T>
@@ -305,6 +312,7 @@ inline void CheckedDecrement(
   USE(old);
 }
 
+// Prefer using `std::atomic_ref<T>`.
 template <typename T>
 V8_INLINE std::atomic<T>* AsAtomicPtr(T* t) {
   static_assert(sizeof(T) == sizeof(std::atomic<T>));
@@ -312,6 +320,10 @@ V8_INLINE std::atomic<T>* AsAtomicPtr(T* t) {
   return reinterpret_cast<std::atomic<T>*>(t);
 }
 
+// Prefer using `std::atomic_ref<T>`. This may require a `const_cast()` to get
+// rid of the const qualifier as `std::atomic_ref<T>` deliberately wants to
+// support all operations (including stores, or read-modify-write) on all
+// instances.
 template <typename T>
 V8_INLINE const std::atomic<T>* AsAtomicPtr(const T* t) {
   static_assert(sizeof(T) == sizeof(std::atomic<T>));

@@ -1,13 +1,12 @@
 include_rules = [
   "+src",
-  "-src/asmjs",
-  "+src/asmjs/asm-js.h",
   "-src/baseline",
   "+src/baseline/baseline.h",
   "+src/baseline/baseline-batch-compiler.h",
   "+src/baseline/bytecode-offset-iterator.h",
   "-src/bigint",
   "+src/bigint/bigint.h",
+  "+src/bigint/bigint-inl.h",
   "-src/compiler",
   "+src/compiler/code-assembler.h",
   "+src/compiler/turbofan.h",
@@ -17,7 +16,7 @@ include_rules = [
   "-src/flags/flags-impl.h",
   "-src/heap",
   "+src/heap/memory-chunk-constants.h",
-  "+src/heap/memory-chunk-metadata.h",
+  "+src/heap/base-page.h",
   "+src/heap/code-range.h",
   "+src/heap/read-only-spaces.h",
   "+src/heap/trusted-range.h",
@@ -43,11 +42,11 @@ include_rules = [
   "+src/heap/local-heap-inl.h",
   "+src/heap/pretenuring-handler-inl.h",
   # TODO(v8:10496): Don't expose memory chunk outside of heap/.
-  "+src/heap/mutable-page-metadata.h",
-  "+src/heap/mutable-page-metadata-inl.h",
+  "+src/heap/mutable-page.h",
+  "+src/heap/mutable-page-inl.h",
   "+src/heap/memory-chunk.h",
-  "+src/heap/page-metadata-inl.h",
   "+src/heap/memory-pool.h",
+  "+src/heap/normal-page-inl.h",
   "+src/heap/paged-spaces-inl.h",
   "+src/heap/parked-scope-inl.h",
   "+src/heap/parked-scope.h",
@@ -72,6 +71,7 @@ include_rules = [
   "-src/maglev",
   "+src/maglev/maglev.h",
   "+src/maglev/maglev-concurrent-dispatcher.h",
+  "+src/maglev/maglev-node-type.h",
   "-src/regexp",
   "+src/regexp/regexp.h",
   "+src/regexp/regexp-flags.h",
@@ -88,6 +88,7 @@ include_rules = [
   "-src/libplatform",
   "-include/libplatform",
   "+builtins-generated",
+  "+metagen",
   "+torque-generated",
   "+starboard",
 ]
@@ -97,13 +98,20 @@ specific_include_rules = {
     "+include/libplatform/libplatform.h",
     "+include/libplatform/v8-tracing.h",
     "+perfetto/tracing/track_event.h",
-    "+perfetto/tracing/track_event_legacy.h"
+    "+perfetto/tracing/track_event_legacy.h",
+    "+third_party/partition_alloc/src/partition_alloc/partition_alloc.h",
+    "+third_party/partition_alloc/src/partition_alloc/partition_root.h",
+    "+third_party/partition_alloc/src/partition_alloc/shim/allocator_shim_default_dispatch_to_partition_alloc.h"
   ],
   "d8-platforms\.cc": [
     "+include/libplatform/libplatform.h",
+    "+third_party/partition_alloc/src/partition_alloc/partition_address_space.h"
   ],
   "builtins-trace\.cc": [
     "+protos/perfetto",
+  ],
+  "default-platform\.cc": [
+    "+third_party/partition_alloc/src/partition_alloc/partition_address_space.h"
   ],
   "etw-jit-win\.cc": [
     "+src/libplatform/tracing/recorder.h",
@@ -137,7 +145,17 @@ specific_include_rules = {
   "heap\.cc": [
     "+third_party/rapidhash-v8/secret.h",
   ],
-  "hash-seed-inl\.h": [
+  "hash-seed\.cc": [
     "+third_party/rapidhash-v8/secret.h",
+  ],
+  "heap-snapshot-generator\.cc": [
+    "+src/heap/cppgc-js/cpp-heap.h",
+    "+src/heap/cppgc-js/cpp-snapshot.h",
+  ],
+  "generated-code-validator-arm64\.cc": [
+    "+third_party/disarm/src/disarm64.h",
+  ],
+  "generated-code-validator-x64\.cc": [
+    "+third_party/fadec/src/fadec.h",
   ],
 }

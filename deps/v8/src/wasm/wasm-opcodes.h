@@ -257,55 +257,20 @@ V8_EXPORT_PRIVATE bool IsJSCompatibleSignature(const CanonicalSig* sig);
   V(I64SExtendI16, 0xc3, l_l, "i64.extend16_s") \
   V(I64SExtendI32, 0xc4, l_l, "i64.extend32_s")
 
-#define FOREACH_WASMFX_OPCODE(V)          \
-  V(ContNew, 0xe0, _, "cont.new")         \
-  V(ContBind, 0xe1, _, "cont.bind")       \
-  V(Suspend, 0xe2, _, "suspend")          \
-  V(Resume, 0xe3, _, "resume")            \
-  V(ResumeThrow, 0xe4, _, "resume_throw") \
-  V(Switch, 0xe5, _, "switch")
+#define FOREACH_WASMFX_OPCODE(V)                 \
+  V(ContNew, 0xe0, _, "cont.new")                \
+  V(ContBind, 0xe1, _, "cont.bind")              \
+  V(Suspend, 0xe2, _, "suspend")                 \
+  V(Resume, 0xe3, _, "resume")                   \
+  V(ResumeThrow, 0xe4, _, "resume_throw")        \
+  V(ResumeThrowRef, 0xe5, _, "resume_throw_ref") \
+  V(Switch, 0xe6, _, "switch")
 
 #define FOREACH_SIMPLE_OPCODE(V)          \
   FOREACH_SIMPLE_EXTENDED_CONST_OPCODE(V) \
   FOREACH_SIMPLE_NON_CONST_OPCODE(V)
 
 #define FOREACH_SIMPLE_PROTOTYPE_OPCODE(V)
-
-// For compatibility with Asm.js.
-// These opcodes are not spec'ed (or visible) externally; the idea is
-// to use unused ranges for internal purposes.
-#define FOREACH_ASMJS_COMPAT_OPCODE(V)                           \
-  V(F64Acos, 0xfa3c, d_d, "f64.acos")                            \
-  V(F64Asin, 0xfa3d, d_d, "f64.asin")                            \
-  V(F64Atan, 0xfa3e, d_d, "f64.atan")                            \
-  V(F64Cos, 0xfa3f, d_d, "f64.cos")                              \
-  V(F64Sin, 0xfa40, d_d, "f64.sin")                              \
-  V(F64Tan, 0xfa41, d_d, "f64.tan")                              \
-  V(F64Exp, 0xfa42, d_d, "f64.exp")                              \
-  V(F64Log, 0xfa43, d_d, "f64.log")                              \
-  V(F64Atan2, 0xfa44, d_dd, "f64.atan2")                         \
-  V(F64Pow, 0xfa45, d_dd, "f64.pow")                             \
-  V(F64Mod, 0xfa46, d_dd, "f64.mod")                             \
-  V(I32AsmjsDivS, 0xfa47, i_ii, "i32.asmjs_div_s")               \
-  V(I32AsmjsDivU, 0xfa48, i_ii, "i32.asmjs_div_u")               \
-  V(I32AsmjsRemS, 0xfa49, i_ii, "i32.asmjs_rem_s")               \
-  V(I32AsmjsRemU, 0xfa4a, i_ii, "i32.asmjs_rem_u")               \
-  V(I32AsmjsLoadMem8S, 0xfa4b, i_i, "i32.asmjs_load8_s")         \
-  V(I32AsmjsLoadMem8U, 0xfa4c, i_i, "i32.asmjs_load8_u")         \
-  V(I32AsmjsLoadMem16S, 0xfa4d, i_i, "i32.asmjs_load16_s")       \
-  V(I32AsmjsLoadMem16U, 0xfa4e, i_i, "i32.asmjs_load16_u")       \
-  V(I32AsmjsLoadMem, 0xfa4f, i_i, "i32.asmjs_load32")            \
-  V(F32AsmjsLoadMem, 0xfa50, f_i, "f32.asmjs_load")              \
-  V(F64AsmjsLoadMem, 0xfa51, d_i, "f64.asmjs_load")              \
-  V(I32AsmjsStoreMem8, 0xfa52, i_ii, "i32.asmjs_store8")         \
-  V(I32AsmjsStoreMem16, 0xfa53, i_ii, "i32.asmjs_store16")       \
-  V(I32AsmjsStoreMem, 0xfa54, i_ii, "i32.asmjs_store")           \
-  V(F32AsmjsStoreMem, 0xfa55, f_if, "f32.asmjs_store")           \
-  V(F64AsmjsStoreMem, 0xfa56, d_id, "f64.asmjs_store")           \
-  V(I32AsmjsSConvertF32, 0xfa57, i_f, "i32.asmjs_convert_f32_s") \
-  V(I32AsmjsUConvertF32, 0xfa58, i_f, "i32.asmjs_convert_f32_u") \
-  V(I32AsmjsSConvertF64, 0xfa59, i_d, "i32.asmjs_convert_f64_s") \
-  V(I32AsmjsUConvertF64, 0xfa5a, i_d, "i32.asmjs_convert_f64_u")
 
 #define FOREACH_SIMD_MEM_OPCODE(V)                     \
   V(S128LoadMem, 0xfd00, s_i, "v128.load")             \
@@ -629,6 +594,12 @@ V8_EXPORT_PRIVATE bool IsJSCompatibleSignature(const CanonicalSig* sig);
   FOREACH_SIMD_MEM_1_OPERAND_OPCODE(V) \
   FOREACH_SIMD_CONST_OPCODE(V)
 
+#define FOREACH_NUMERIC_OPCODE_WIDE(V)        \
+  V(I64Add128, 0xfc13, _, "i64.add128")       \
+  V(I64Sub128, 0xfc14, _, "i64.sub128")       \
+  V(I64MulWideS, 0xfc15, _, "i64.mul_wide_s") \
+  V(I64MulWideU, 0xfc16, _, "i64.mul_wide_u")
+
 #define FOREACH_NUMERIC_OPCODE_WITH_SIG(V)                 \
   V(I32SConvertSatF32, 0xfc00, i_f, "i32.trunc_sat_f32_s") \
   V(I32UConvertSatF32, 0xfc01, i_f, "i32.trunc_sat_f32_u") \
@@ -655,8 +626,10 @@ V8_EXPORT_PRIVATE bool IsJSCompatibleSignature(const CanonicalSig* sig);
   /* It's whatever the table type is. */                  \
   V(TableFill, 0xfc11, _, "table.fill")
 
-#define FOREACH_NUMERIC_OPCODE(V) \
-  FOREACH_NUMERIC_OPCODE_WITH_SIG(V) FOREACH_NUMERIC_OPCODE_VARIADIC(V)
+#define FOREACH_NUMERIC_OPCODE(V)    \
+  FOREACH_NUMERIC_OPCODE_WITH_SIG(V) \
+  FOREACH_NUMERIC_OPCODE_WIDE(V)     \
+  FOREACH_NUMERIC_OPCODE_VARIADIC(V)
 
 // kExprName, binary, signature for memory32, wat name, signature for memory64.
 #define FOREACH_ATOMIC_OPCODE(V)                                              \
@@ -770,11 +743,13 @@ V8_EXPORT_PRIVATE bool IsJSCompatibleSignature(const CanonicalSig* sig);
   V(I31GetU, 0xfb1e, _, "i31.get_u")                                           \
   V(RefI31Shared, 0xfb1f, _, "ref.i31_shared")                                 \
   /* Custom Descriptors proposal */                                            \
+  V(StructNewDesc, 0xfb20, _, "struct.new_desc")                               \
+  V(StructNewDefaultDesc, 0xfb21, _, "struct.new_default_desc")                \
   V(RefGetDesc, 0xfb22, _, "ref.get_desc")                                     \
-  V(RefCastDesc, 0xfb23, _, "ref.cast_desc")                                   \
-  V(RefCastDescNull, 0xfb24, _, "ref.cast_desc null")                          \
-  V(BrOnCastDesc, 0xfb25, _, "br_on_cast_desc")                                \
-  V(BrOnCastDescFail, 0xfb26, _, "br_on_cast_desc_fail")                       \
+  V(RefCastDescEq, 0xfb23, _, "ref.cast_desc_eq")                              \
+  V(RefCastDescEqNull, 0xfb24, _, "ref.cast_desc_eq null")                     \
+  V(BrOnCastDescEq, 0xfb25, _, "br_on_cast_desc_eq")                           \
+  V(BrOnCastDescEqFail, 0xfb26, _, "br_on_cast_desc_eq_fail")                  \
   V(RefCastNop, 0xfb4c, _, "ref.cast_nop")                                     \
   /* Stringref proposal. */                                                    \
   V(StringNewUtf8, 0xfb80, _, "string.new_utf8")                               \
@@ -825,6 +800,12 @@ V8_EXPORT_PRIVATE bool IsJSCompatibleSignature(const CanonicalSig* sig);
 
 #define FOREACH_ATOMIC_GC_OPCODE(V) /*          Force 80 columns            */ \
   V(Pause, 0xfe04, _, "pause")                                                 \
+  /* Adjust the next four when the spec defines them. */                       \
+  V(StructWait, 0xfe05, _, "struct.wait")                                      \
+  V(WaitqueueNotify, 0xfe06, _, "waitqueue.notify")                            \
+  V(WaitqueueNew, 0xfe07, _, "waitqueue.new")                                  \
+  V(ArrayWait, 0xfe08, _, "array.wait")                                        \
+  V(Publish, 0xfe0f, _, "publish")                                             \
   V(StructAtomicGet, 0xfe5c, _, "struct.atomic.get")                           \
   V(StructAtomicGetS, 0xfe5d, _, "struct.atomic.get_s")                        \
   V(StructAtomicGetU, 0xfe5e, _, "struct.atomic.get_u")                        \
@@ -857,7 +838,6 @@ V8_EXPORT_PRIVATE bool IsJSCompatibleSignature(const CanonicalSig* sig);
   FOREACH_STORE_MEM_OPCODE(V)        \
   FOREACH_LOAD_MEM_OPCODE(V)         \
   FOREACH_MISC_MEM_OPCODE(V)         \
-  FOREACH_ASMJS_COMPAT_OPCODE(V)     \
   FOREACH_SIMD_OPCODE(V)             \
   FOREACH_ATOMIC_OPCODE(V)           \
   FOREACH_ATOMIC_0_OPERAND_OPCODE(V) \
@@ -933,7 +913,6 @@ V8_EXPORT_PRIVATE bool IsJSCompatibleSignature(const CanonicalSig* sig);
   V(s_is, kWasmS128, kWasmI32, kWasmS128)
 
 #define FOREACH_PREFIX(V) \
-  V(AsmJs, 0xfa)          \
   V(GC, 0xfb)             \
   V(Numeric, 0xfc)        \
   V(Simd, 0xfd)           \
@@ -980,27 +959,15 @@ class V8_EXPORT_PRIVATE WasmOpcodes {
   static constexpr const FunctionSig* Signature(WasmOpcode);
   static constexpr const FunctionSig* SignatureForAtomicOp(WasmOpcode opcode,
                                                            bool is_memory64);
-  static constexpr const FunctionSig* AsmjsSignature(WasmOpcode);
   static constexpr bool IsPrefixOpcode(WasmOpcode);
-  static constexpr bool IsControlOpcode(WasmOpcode);
-  static constexpr bool IsExternRefOpcode(WasmOpcode);
-  static constexpr bool IsThrowingOpcode(WasmOpcode);
   static constexpr bool IsRelaxedSimdOpcode(WasmOpcode);
   static constexpr bool IsFP16SimdOpcode(WasmOpcode);
-#if DEBUG
-  static constexpr bool IsMemoryAccessOpcode(WasmOpcode);
-#endif  // DEBUG
-  // Check whether the given opcode always jumps, i.e. all instructions after
-  // this one in the current block are dead. Returns false for |end|.
-  static constexpr bool IsUnconditionalJump(WasmOpcode);
-  static constexpr bool IsBreakable(WasmOpcode);
+  static constexpr bool IsAtomicRmwOpcode(WasmOpcode);
 
-  static constexpr MessageTemplate TrapReasonToMessageId(TrapReason);
-  static constexpr TrapReason MessageIdToTrapReason(MessageTemplate message);
+  static constexpr bool IsBreakable(WasmOpcode);
 
   // Extract the prefix byte (or 0x00) from a {WasmOpcode}.
   static constexpr uint8_t ExtractPrefix(WasmOpcode);
-  static inline const char* TrapReasonMessage(TrapReason);
 };
 
 }  // namespace wasm

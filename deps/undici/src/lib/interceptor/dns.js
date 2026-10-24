@@ -3,7 +3,107 @@ const { isIP } = require('node:net')
 const { lookup } = require('node:dns')
 const DecoratorHandler = require('../handler/decorator-handler')
 const { InvalidArgumentError, InformationalError } = require('../core/errors')
+const { kRequestOrigin } = require('../core/symbols')
 const maxInt = Math.pow(2, 31) - 1
+
+function hasSafeIterator (headers) {
+  const prototype = Object.getPrototypeOf(headers)
+  const ownIterator = Object.hasOwn(headers, Symbol.iterator)
+  return ownIterator || (prototype != null && prototype !== Object.prototype && typeof headers[Symbol.iterator] === 'function')
+}
+
+function isHostHeader (key) {
+  return typeof key === 'string' && key.toLowerCase() === 'host'
+}
+
+function normalizeHeaders (headers) {
+  if (headers == null) {
+    return null
+  }
+
+  if (Array.isArray(headers)) {
+    if (headers.length === 0 || !Array.isArray(headers[0])) {
+      return headers
+    }
+
+    const normalized = []
+    for (const header of headers) {
+      if (Array.isArray(header) && header.length === 2) {
+        normalized.push(header[0], header[1])
+      } else {
+        normalized.push(header)
+      }
+    }
+
+    return normalized
+  }
+
+  if (typeof headers === 'object' && hasSafeIterator(headers)) {
+    const normalized = []
+    for (const header of headers) {
+      if (Array.isArray(header) && header.length === 2) {
+        normalized.push(header[0], header[1])
+      } else {
+        normalized.push(header)
+      }
+    }
+
+    return normalized
+  }
+
+  return headers
+}
+
+function hasHostHeader (headers) {
+  if (headers == null) {
+    return false
+  }
+
+  if (Array.isArray(headers)) {
+    if (headers.length === 0) {
+      return false
+    }
+
+    for (let i = 0; i < headers.length; i += 2) {
+      if (isHostHeader(headers[i])) {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  if (typeof headers === 'object') {
+    for (const key in headers) {
+      if (isHostHeader(key)) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+function withHostHeader (host, headers) {
+  const normalizedHeaders = normalizeHeaders(headers)
+
+  if (hasHostHeader(normalizedHeaders)) {
+    return normalizedHeaders
+  }
+
+  if (Array.isArray(normalizedHeaders)) {
+    return ['host', host, ...normalizedHeaders]
+  }
+
+  if (normalizedHeaders && typeof normalizedHeaders === 'object') {
+    return {
+      host,
+      ...normalizedHeaders
+    }
+  }
+
+  return { host }
+}
 
 class DNSStorage {
   #maxItems = 0
@@ -89,6 +189,16 @@ class DNSInstance {
           records,
           newOpts.affinity
         )
+
+        // The lookup succeeded, but nothing it returned is usable here: with
+        // dualStack disabled and an affinity set, records of the other family
+        // cannot be picked. Running the lookup again would return the same
+        // records, so report it the way an empty result is reported.
+        if (ip == null) {
+          this.storage.delete(origin.hostname)
+          cb(new InformationalError('No DNS entries found'))
+          return
+        }
 
         let port
         if (typeof ip.port === 'number') {
@@ -246,6 +356,7 @@ class DNSInstance {
       // We delete expired records
       // It is possible that they have different TTL, so we manage them individually
       family.ips.splice(position, 1)
+      return this.pickFamily(origin, ipFamily)
     }
 
     return ip
@@ -333,8 +444,12 @@ class DNSDispatchHandler extends DecoratorHandler {
           const dispatchOpts = {
             ...this.#opts,
             origin: `${this.#origin.protocol}//${
-                ip.family === 6 ? `[${ip.address}]` : ip.address
-              }${port}`
+              ip.family === 6 ? `[${ip.address}]` : ip.address
+            }${port}`,
+            [kRequestOrigin]: this.#opts[kRequestOrigin] === undefined
+              ? this.#origin
+              : this.#opts[kRequestOrigin],
+            headers: withHostHeader(this.#origin.host, this.#opts.headers)
           }
           this.#dispatch(dispatchOpts, this)
           return
@@ -435,6 +550,10 @@ module.exports = interceptorOpts => {
 
   return dispatch => {
     return function dnsInterceptor (origDispatchOpts, handler) {
+      if (origDispatchOpts.origin == null) {
+        return dispatch(origDispatchOpts, handler)
+      }
+
       const origin =
         origDispatchOpts.origin.constructor === URL
           ? origDispatchOpts.origin
@@ -453,10 +572,10 @@ module.exports = interceptorOpts => {
           ...origDispatchOpts,
           servername: origin.hostname, // For SNI on TLS
           origin: newOrigin.origin,
-          headers: {
-            host: origin.host,
-            ...origDispatchOpts.headers
-          }
+          [kRequestOrigin]: origDispatchOpts[kRequestOrigin] === undefined
+            ? origin
+            : origDispatchOpts[kRequestOrigin],
+          headers: withHostHeader(origin.host, origDispatchOpts.headers)
         }
 
         dispatch(

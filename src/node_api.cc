@@ -308,7 +308,7 @@ class ThreadSafeFunction {
     return napi_ok;
   }
 
-  void EmptyQueueAndMaybeDelete() {
+  void EmptyQueue() {
     std::queue<void*> drain_queue;
     {
       node::Mutex::ScopedLock lock(this->mutex);
@@ -317,6 +317,9 @@ class ThreadSafeFunction {
     for (; !drain_queue.empty(); drain_queue.pop()) {
       call_js_cb(nullptr, nullptr, context, drain_queue.front());
     }
+  }
+
+  void MaybeDelete() {
     {
       node::Mutex::ScopedLock lock(this->mutex);
       if (thread_count > 0) {
@@ -448,6 +451,7 @@ class ThreadSafeFunction {
 
     if (popped_value) {
       v8::HandleScope scope(env->isolate);
+      v8::Context::Scope context_scope(env->context());
       AsyncResource::CallbackScope cb_scope(&*async_resource);
       napi_value js_callback = nullptr;
       if (!ref.IsEmpty()) {
@@ -464,11 +468,13 @@ class ThreadSafeFunction {
 
   void Finalize() {
     v8::HandleScope scope(env->isolate);
+    EmptyQueue();
     if (finalize_cb) {
+      v8::Context::Scope context_scope(env->context());
       AsyncResource::CallbackScope cb_scope(&*async_resource);
       env->CallFinalizer<false>(finalize_cb, finalize_data, context);
     }
-    EmptyQueueAndMaybeDelete();
+    MaybeDelete();
   }
 
   void CloseHandlesAndMaybeDelete(bool set_closing = false) {
@@ -764,6 +770,8 @@ void napi_module_register_by_symbol(v8::Local<v8::Object> exports,
   // Create a new napi_env for this specific module.
   napi_env env =
       node_napi_env__::New(context, module_filename, module_api_version);
+  // `module_api_version` is not supported.
+  if (env == nullptr) return;
 
   napi_value _exports = nullptr;
   env->CallIntoModule([&](napi_env env) {
@@ -1232,6 +1240,7 @@ class Work : public node::AsyncResource, public node::ThreadPoolWork {
     // Establish a handle scope here so that every callback doesn't have to.
     // Also it is needed for the exception-handling below.
     v8::HandleScope scope(_env->isolate);
+    v8::Context::Scope context_scope(_env->context());
 
     CallbackScope callback_scope(this);
 

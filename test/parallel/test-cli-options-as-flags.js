@@ -28,6 +28,7 @@ describe('getOptionsAsFlagsFromBinding', () => {
 
     assert.strictEqual(flags.includes('--no-warnings'), true);
     assert.strictEqual(flags.includes('--stack-trace-limit=512'), true);
+    assert.strictEqual(flags.some((flag) => flag.startsWith('--bench-')), false);
   });
 
   it('should extract flags from NODE_OPTIONS environment variable', onlyIfNodeOptionsSupport, async () => {
@@ -55,8 +56,7 @@ describe('getOptionsAsFlagsFromBinding', () => {
     const result = await spawnPromisified(process.execPath, [
       '--no-warnings',
       '--expose-internals',
-      '--experimental-config-file',
-      configFile,
+      `--config-file=${configFile}`,
       fixtureFile,
     ]);
 
@@ -64,7 +64,6 @@ describe('getOptionsAsFlagsFromBinding', () => {
     const flags = JSON.parse(result.stdout.trim());
 
     // Should contain flags from config file
-    assert.strictEqual(flags.includes('--experimental-transform-types'), true);
     assert.strictEqual(flags.includes('--max-http-header-size=8192'), true);
     assert.strictEqual(flags.includes('--test-isolation=none'), true);
     // Should also contain command line flags
@@ -76,8 +75,7 @@ describe('getOptionsAsFlagsFromBinding', () => {
       '--no-warnings',
       '--expose-internals',
       '--stack-trace-limit=512',
-      '--experimental-config-file',
-      configFile,
+      `--config-file=${configFile}`,
       fixtureFile,
     ]);
 
@@ -89,7 +87,6 @@ describe('getOptionsAsFlagsFromBinding', () => {
     assert.strictEqual(flags.includes('--stack-trace-limit=512'), true);
 
     // Should contain flags from config file
-    assert.strictEqual(flags.includes('--experimental-transform-types'), true);
     assert.strictEqual(flags.includes('--max-http-header-size=8192'), true);
     assert.strictEqual(flags.includes('--test-isolation=none'), true);
   });

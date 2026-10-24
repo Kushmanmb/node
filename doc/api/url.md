@@ -830,6 +830,7 @@ console.log(myPattern.exec('https://nodejs.org/docs/latest/api/dns.html'));
 
 * `input` {string | Object} A URL or URL parts
 * `baseURL` {string | undefined} A base URL string
+* Returns {boolean}
 
 Input can be a string or an object providing the individual URL parts. The
 object members can be any of `protocol`, `username`, `password`, `hostname`,
@@ -1741,6 +1742,7 @@ changes:
 
 * `urlObject` {Object} A URL object (as returned by `url.parse()` or
   constructed otherwise).
+* Returns: {string}
 
 The `url.format()` method returns a formatted URL string derived from
 `urlObject`.
@@ -1836,10 +1838,11 @@ changes:
 
 * `urlString` {string} A string that will be passed to `url.parse()` and then
   formatted.
+* Returns: {string}
 
 `url.format(urlString)` is shorthand for `url.format(url.parse(urlString))`.
 
-Because it invokes the deprecated [`url.parse()`][], passing a string argument
+Because it invokes the deprecated [`url.parse()`][] internally, passing a string argument
 to `url.format()` is itself deprecated.
 
 Canonicalizing a URL string can be performed using the WHATWG URL API, by
@@ -1957,6 +1960,10 @@ npx codemod@latest @nodejs/node-url-to-whatwg-url
 added: v0.1.25
 changes:
   - version:
+      - v24.0.0
+    pr-url: https://github.com/nodejs/node/pull/55017
+    description: Deprecated again through DEP0169.
+  - version:
       - v15.13.0
       - v14.17.0
     pr-url: https://github.com/nodejs/node/pull/37784
@@ -1979,6 +1986,8 @@ changes:
                  contains a hostname.
 -->
 
+> Stability: 0 - Deprecated: Use the WHATWG URL API instead.
+
 * `from` {string} The base URL to use if `to` is a relative URL.
 * `to` {string} The target URL to resolve.
 
@@ -1991,6 +2000,8 @@ url.resolve('/one/two/three', 'four');         // '/one/two/four'
 url.resolve('http://example.com/', '/one');    // 'http://example.com/one'
 url.resolve('http://example.com/one', '/two'); // 'http://example.com/two'
 ```
+
+Because it invokes the deprecated [`url.parse()`][] internally, `url.resolve()` is itself deprecated.
 
 To achieve the same result using the WHATWG URL API:
 

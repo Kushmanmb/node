@@ -57,13 +57,13 @@
 namespace v8 {
 namespace internal {
 
+#ifdef DEBUG
 class DebugFile : public std::ofstream {
  public:
   static DebugFile& GetDebugFile() {
-    static DebugFile debug_file;
-    return debug_file;
+    static DebugFile* debug_file = new DebugFile();
+    return *debug_file;
   }
-  ~DebugFile() { flush(); }
   DebugFile(const DebugFile&) = delete;
   DebugFile& operator=(const DebugFile&) = delete;
 
@@ -81,6 +81,9 @@ class DebugFile : public std::ofstream {
       PrintF(__VA_ARGS__);                                                     \
     }                                                                          \
   }
+#else
+#define DEBUG_PRINTF(...)
+#endif
 
 class SafepointTableBuilder;
 
@@ -178,6 +181,8 @@ class AssemblerRiscvBase {
                   uint8_t uimm8);
   void GenInstrCBA(uint8_t funct3, uint8_t funct2, BaseOpcode opcode,
                    Register rs1, int8_t imm6);
+  void GenInstrCU(uint8_t funct3, uint8_t funct2, BaseOpcode opcode,
+                  Register rd, uint8_t nzuimm);
 
   // ----- Instruction class templates match those in LLVM's RISCVInstrInfo.td
   void GenInstrBranchCC_rri(uint8_t funct3, Register rs1, Register rs2,

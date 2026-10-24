@@ -8,6 +8,7 @@
 #include "src/builtins/builtins.h"
 // Include the non-inl header before the rest of the headers.
 
+#include "src/base/logging.h"
 #include "src/execution/isolate.h"
 
 namespace v8 {
@@ -21,6 +22,7 @@ constexpr Builtin Builtins::RecordWrite(SaveFPRegsMode fp_mode) {
     case SaveFPRegsMode::kSave:
       return Builtin::kRecordWriteSaveFP;
   }
+  UNREACHABLE();
 }
 
 // static
@@ -31,6 +33,7 @@ constexpr Builtin Builtins::IndirectPointerBarrier(SaveFPRegsMode fp_mode) {
     case SaveFPRegsMode::kSave:
       return Builtin::kIndirectPointerBarrierSaveFP;
   }
+  UNREACHABLE();
 }
 
 // static
@@ -41,6 +44,7 @@ constexpr Builtin Builtins::EphemeronKeyBarrier(SaveFPRegsMode fp_mode) {
     case SaveFPRegsMode::kSave:
       return Builtin::kEphemeronKeyBarrierSaveFP;
   }
+  UNREACHABLE();
 }
 
 // static
@@ -133,7 +137,7 @@ constexpr Builtin Builtins::OrdinaryToPrimitive(OrdinaryToPrimitiveHint hint) {
 constexpr Builtin Builtins::StringAdd(StringAddFlags flags) {
   switch (flags) {
     case STRING_ADD_CHECK_NONE:
-      return Builtin::kStringAdd_CheckNone;
+      return Builtin::kStringAdd_NoMapCheck;
     case STRING_ADD_CONVERT_LEFT:
       return Builtin::kStringAddConvertLeft;
     case STRING_ADD_CONVERT_RIGHT:
@@ -266,15 +270,23 @@ int Builtins::GetFormalParameterCount(Builtin builtin) {
 
   // TODO(saelo): consider merging GetFormalParameterCount and
   // GetStackParameterCount into a single function.
-  if (Builtins::KindOf(builtin) == TFJ_TSA ||
-      Builtins::KindOf(builtin) == TFJ) {
+  Builtins::Kind kind = KindOf(builtin);
+  if (kind == TFJ_TSA || kind == TFJ) {
     return Builtins::GetStackParameterCount(builtin);
-  } else if (Builtins::KindOf(builtin) == ASM ||
-             Builtins::KindOf(builtin) == TFC) {
-    // At the moment, all ASM builtins are varargs builtins. This is verified
-    // in CheckFormalParameterCount.
+
+  } else if (kind == ASM || kind == TFC) {
+#if V8_ENABLE_WEBASSEMBLY
+    // WasmResume and WasmReject have fixed stack cleanup for the receiver and
+    // one explicit argument.
+    if (builtin == Builtin::kWasmResume || builtin == Builtin::kWasmReject) {
+      return JSParameterCount(1);
+    }
+#endif  // V8_ENABLE_WEBASSEMBLY
+    // Other ASM and TFC builtins with JS linkage are varargs builtins. This is
+    // verified in CheckFormalParameterCount.
     return kDontAdaptArgumentsSentinel;
-  } else if (Builtins::KindOf(builtin) == CPP) {
+
+  } else if (kind == CPP) {
 #define CPP_BUILTIN(Name, Argc) \
   case Builtin::k##Name:        \
     return Argc;
@@ -289,6 +301,73 @@ int Builtins::GetFormalParameterCount(Builtin builtin) {
     UNREACHABLE();
   }
 }
+
+// static
+bool Builtins::IsDisabled(Builtin builtin) {
+  auto flags = GetJSBuiltinState(builtin);
+  DCHECK_EQ(HasJSLinkage(builtin),
+            !(flags & JSBuiltinStateFlag::kNonJSLinkage));
+  if (!(flags & JSBuiltinStateFlag::kNonJSLinkage) &&
+      !(flags & JSBuiltinStateFlag::kEnabled)) {
+    return true;
+  }
+  return false;
+}
+
+// static
+bool Builtins::IsJSTrampoline(Builtin builtin) {
+  bool is_js_trampoline = false;
+  // This allow list is the same as "GetJSBuiltinState() & kCoreV8JSTrampoline"
+  // but we keep it here in explicit form in order to make it easier to
+  // reason about.
+  switch (builtin) {
+    case Builtin::kIllegal:
+    case Builtin::kCompileLazy:
+    case Builtin::kMarkFlushed:
+    case Builtin::kInterpreterEntryTrampoline:
+    case Builtin::kDebugBreakTrampoline:
+#ifdef V8_ENABLE_WEBASSEMBLY
+    case Builtin::kJSToWasmWrapper:
+    case Builtin::kWasmPromising:
+#if V8_ENABLE_DRUMBRAKE
+    case Builtin::kJSToWasmInterpreterWrapper:
+#endif
+    case Builtin::kWasmStressSwitch:
+#endif
+      is_js_trampoline = true;
+      break;
+    default:
+      break;
+  }
+  if (DEBUG_BOOL) {
+    // Check that the above list matches JSBuiltinState(..) flags.
+    auto flags = GetJSBuiltinState(builtin);
+    CHECK_EQ(is_js_trampoline,
+             (flags & JSBuiltinStateFlag::kCoreV8JSTrampoline) != 0);
+  }
+  return is_js_trampoline;
+}
+
+// static
+bool Builtins::IsEnabledAndNotJSTrampoline(Builtin builtin) {
+  auto flags = GetJSBuiltinState(builtin);
+  DCHECK_EQ(HasJSLinkage(builtin),
+            !(flags & JSBuiltinStateFlag::kNonJSLinkage));
+  if ((flags & JSBuiltinStateFlag::kEnabled) &&
+      !(flags & JSBuiltinStateFlag::kCoreV8JSTrampoline)) {
+    return true;
+  }
+  return false;
+}
+
+// LINT.IfChange(IsCompatibleJSBuiltin)
+// static
+bool Builtins::IsCompatibleJSBuiltin(Builtin builtin,
+                                     uint16_t parameter_count) {
+  return parameter_count == GetFormalParameterCount(builtin) &&
+         IsEnabledAndNotJSTrampoline(builtin);
+}
+// LINT.ThenChange(/src/sandbox/js-dispatch-table-inl.h:IsCompatibleCode)
 
 }  // namespace internal
 }  // namespace v8

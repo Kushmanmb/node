@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --experimental-wasm-custom-descriptors
+// Flags: --wasm-custom-descriptors
 
 d8.file.execute('test/mjsunit/wasm/wasm-module-builder.js');
 
@@ -24,9 +24,9 @@ builder.addFunction("succeed", kSig_v_v).exportFunc()
   .addBody([
     kExprBlock, $successblocktype,
       kGCPrefix, kExprStructNewDefault, $desc,
-      kGCPrefix, kExprStructNewDefault, $struct,
+      kGCPrefix, kExprStructNewDefaultDesc, $struct,
       kExprLocalGet, 0,
-      kGCPrefix, kExprBrOnCastDesc, 0b00, 0, kWasmExact, $struct, $other,
+      kGCPrefix, kExprBrOnCastDescEq, 0b00, 0, kWasmExact, $struct, $other,
       kExprDrop,
       kExprRefNull, kNullRefCode,
     kExprEnd,  // block
@@ -38,9 +38,9 @@ builder.addFunction("fail", kSig_v_v).exportFunc()
   .addBody([
     kExprBlock, $failblocktype,
       kGCPrefix, kExprStructNewDefault, $desc,
-      kGCPrefix, kExprStructNewDefault, $struct,
+      kGCPrefix, kExprStructNewDefaultDesc, $struct,
       kExprLocalGet, 0,
-      kGCPrefix, kExprBrOnCastDescFail, 0b00, 0, kWasmExact, $struct, $other,
+      kGCPrefix, kExprBrOnCastDescEqFail, 0b00, 0, kWasmExact, $struct, $other,
       kExprDrop,
       kExprRefNull, kNullRefCode,
     kExprEnd,  // block

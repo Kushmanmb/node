@@ -33,7 +33,6 @@ class InfiniteLooperThread final : public ParkingThread {
         sema_execute_complete_(sema_execute_complete) {}
 
   void Run() override {
-    v8::SandboxHardwareSupport::PrepareCurrentThreadForHardwareSandboxing();
     IsolateWithContextWrapper isolate_wrapper;
     v8::Isolate* v8_isolate = isolate_wrapper.v8_isolate();
     v8::Isolate::Scope isolate_scope(v8_isolate);
@@ -94,9 +93,8 @@ TEST_F(GlobalSafepointTest, Interrupt) {
     // as of FeedbackVectors, and we wouldn't be testing the interrupt check.
     base::OS::Sleep(base::TimeDelta::FromMilliseconds(500));
     GlobalSafepointScope global_safepoint(i_main_isolate);
-    i_main_isolate->shared_space_isolate()
-        ->global_safepoint()
-        ->IterateSharedSpaceAndClientIsolates([](Isolate* client) {
+    i_main_isolate->global_safepoint()->IterateSharedSpaceAndClientIsolates(
+        [](Isolate* client) {
           client->stack_guard()->RequestTerminateExecution();
         });
   }

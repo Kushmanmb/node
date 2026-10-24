@@ -16,9 +16,21 @@
 namespace v8 {
 namespace internal {
 
-#include "torque-generated/src/objects/template-objects-tq-inl.inc"
+Tagged<FixedArray> TemplateObjectDescription::raw_strings() const {
+  return raw_strings_.load();
+}
+void TemplateObjectDescription::set_raw_strings(Tagged<FixedArray> value,
+                                                WriteBarrierMode mode) {
+  raw_strings_.store(this, value, mode);
+}
 
-TQ_OBJECT_CONSTRUCTORS_IMPL(TemplateObjectDescription)
+Tagged<FixedArray> TemplateObjectDescription::cooked_strings() const {
+  return cooked_strings_.load();
+}
+void TemplateObjectDescription::set_cooked_strings(Tagged<FixedArray> value,
+                                                   WriteBarrierMode mode) {
+  cooked_strings_.store(this, value, mode);
+}
 
 }  // namespace internal
 }  // namespace v8

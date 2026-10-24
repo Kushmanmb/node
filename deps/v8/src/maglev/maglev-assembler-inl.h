@@ -31,6 +31,8 @@
 #include "src/maglev/s390/maglev-assembler-s390-inl.h"
 #elif V8_TARGET_ARCH_PPC64
 #include "src/maglev/ppc/maglev-assembler-ppc-inl.h"
+#elif V8_TARGET_ARCH_LOONG64
+#include "src/maglev/loong64/maglev-assembler-loong64-inl.h"
 #else
 #error "Maglev does not supported this architecture."
 #endif
@@ -313,7 +315,37 @@ inline void MaglevAssembler::StoreContextCellSmiValue(Register cell,
                                  value);
 }
 
-#if !defined(V8_TARGET_ARCH_RISCV64)
+// static
+inline bool MaglevAssembler::CanStoreTaggedConstant(ValueNode* value) {
+  if (!kSupportsStoreTaggedConstant) return false;
+  switch (value->opcode()) {
+    case Opcode::kSmiConstant:
+#if V8_TARGET_ARCH_ARM64
+      return value->Cast<SmiConstant>()->value() == Smi::zero();
+#else
+    case Opcode::kHeapConstant:
+      return true;
+    case Opcode::kRootConstant:
+      return CanBeImmediate(value->Cast<RootConstant>()->index());
+#endif  // V8_TARGET_ARCH_ARM64
+    default:
+      return false;
+  }
+}
+
+#if !V8_TARGET_ARCH_X64 && !V8_TARGET_ARCH_ARM64
+inline void MaglevAssembler::StoreTaggedFieldNoWriteBarrier(
+    Register object, int offset, ValueNode* constant) {
+  // See {kSupportsStoreTaggedConstant}.
+  UNREACHABLE();
+}
+inline void MaglevAssembler::StoreTaggedFieldNoWriteBarrier(
+    Register object, int offset, Handle<HeapObject> constant) {
+  UNREACHABLE();
+}
+#endif  // !V8_TARGET_ARCH_X64 && !V8_TARGET_ARCH_ARM64
+
+#if !defined(V8_TARGET_ARCH_RISCV64) && !defined(V8_TARGET_ARCH_LOONG64)
 
 inline void MaglevAssembler::CompareInstanceTypeAndJumpIf(
     Register map, InstanceType type, Condition cond, Label* target,
@@ -763,10 +795,32 @@ void MoveArgumentsForBuiltin(MaglevAssembler* masm, Args&&... args) {
 
 }  // namespace detail
 
+inline void MaglevAssembler::CallJSBuiltin(Builtin builtin,
+                                           uint16_t parameter_count) {
+  // Non-JS builtins must be called via CallBuiltin().
+  DCHECK(Builtins::HasJSLinkage(builtin));
+
+  // This SBXCHECK is a defense-in-depth measure to ensure that we always
+  // generate valid calls here (with matching signatures).
+  SBXCHECK(Builtins::IsCompatibleJSBuiltin(builtin, parameter_count));
+
+  CallBuiltinImpl(builtin);
+}
+
 inline void MaglevAssembler::CallBuiltin(Builtin builtin) {
+  // JS builtins must be called via CallJSBuiltin().
+  DCHECK(!Builtins::HasJSLinkage(builtin));
+  CallBuiltinImpl(builtin);
+}
+
+inline void MaglevAssembler::CallBuiltinImpl(Builtin builtin) {
   // Special case allowing calls to DoubleToI, which takes care to preserve all
   // registers and therefore doesn't require special spill handling.
-  DCHECK(allow_call() || builtin == Builtin::kDoubleToI);
+  DCHECK(allow_call() || builtin == Builtin::kDoubleToI
+#ifdef V8_DUMPLING
+         || builtin == Builtin::kDumpFrame
+#endif  // V8_DUMPLING
+  );
 
   // Checking that the allow_allocate effect is correct.
   // TODO(dmercadier): also check this on Bazel (currently disabled by the
@@ -774,8 +828,11 @@ inline void MaglevAssembler::CallBuiltin(Builtin builtin) {
   // builtins-effects.cc in the final v8 binary.
 #ifndef GOOGLE3
   DCHECK_IMPLIES(!allow_allocate(), builtin == Builtin::kDoubleToI ||
+#ifdef V8_DUMPLING
+                                        builtin == Builtin::kDumpFrame ||
+#endif  // V8_DUMPLING
                                         !BuiltinCanAllocate(builtin));
-#endif
+#endif  // GOOGLE3
 
   // Temporaries have to be reset before calling CallBuiltin, in case it uses
   // temporaries that alias register parameters.
@@ -822,10 +879,7 @@ inline void MaglevAssembler::CallRuntime(Runtime::FunctionId fid,
 }
 
 inline void MaglevAssembler::SetMapAsRoot(Register object, RootIndex map) {
-  TemporaryRegisterScope temps(this);
-  Register scratch = temps.AcquireScratch();
-  LoadTaggedRoot(scratch, map);
-  StoreTaggedFieldNoWriteBarrier(object, HeapObject::kMapOffset, scratch);
+  StoreTaggedRoot(FieldMemOperand(object, offsetof(HeapObject, map_)), map);
 }
 
 inline void MaglevAssembler::SmiTagInt32AndJumpIfFail(
@@ -984,51 +1038,6 @@ inline void MaglevAssembler::JumpIfStringMap(Register map, Label* target,
 #endif
 }
 
-inline void MaglevAssembler::JumpIfSeqOneByteStringMap(Register map,
-                                                       Label* target,
-                                                       Label::Distance distance,
-                                                       bool jump_if_true) {
-  Label fallthrough;
-  Label* target_if_false = jump_if_true ? &fallthrough : target;
-  Label::Distance distance_if_false = jump_if_true ? Label::kNear : distance;
-
-#if V8_STATIC_ROOTS_BOOL
-  // All string maps are allocated at the start of the read only heap. Thus,
-  // non-strings must have maps with larger (compressed) addresses.
-  static_assert(
-      InstanceTypeChecker::kUniqueMapRangeOfStringType::kSeqString.first == 0);
-
-  CompareInt32AndJumpIf(
-      map, InstanceTypeChecker::kUniqueMapRangeOfStringType::kSeqString.second,
-      kUnsignedGreaterThan, target_if_false, distance_if_false);
-  static_assert(base::bits::CountPopulation(
-                    InstanceTypeChecker::kStringMapEncodingMask) == 1);
-  static_assert(InstanceTypeChecker::kTwoByteStringMapBit ==
-                InstanceTypeChecker::kStringMapEncodingMask);
-  if (jump_if_true) {
-    TestInt32AndJumpIfAllClear(map, InstanceTypeChecker::kStringMapEncodingMask,
-                               target, distance);
-  } else {
-    TestInt32AndJumpIfAnySet(map, InstanceTypeChecker::kStringMapEncodingMask,
-                             target, distance);
-  }
-#else
-#ifdef V8_COMPRESS_POINTERS
-  DecompressTagged(map, map);
-#endif
-  static_assert(FIRST_STRING_TYPE == FIRST_TYPE);
-  TemporaryRegisterScope temps(this);
-  Register instance_type = temps.AcquireScratch();
-  Condition jump_cond = CompareInstanceTypeRange(map, instance_type, FIRST_TYPE,
-                                                 LAST_STRING_TYPE);
-  JumpIf(NegateCondition(jump_cond), target_if_false, distance_if_false);
-  AndInt32(instance_type, kStringRepresentationAndEncodingMask);
-  CompareInt32AndJumpIf(instance_type, kSeqOneByteStringTag,
-                        jump_if_true ? kEqual : kNotEqual, target, distance);
-#endif
-
-  bind(&fallthrough);
-}
 
 inline void MaglevAssembler::JumpIfString(Register heap_object, Label* target,
                                           Label::Distance distance) {
@@ -1053,18 +1062,6 @@ inline void MaglevAssembler::JumpIfNotString(Register heap_object,
   LoadMap(scratch, heap_object);
 #endif
   JumpIfStringMap(scratch, target, distance, false);
-}
-
-inline void MaglevAssembler::JumpIfNotSeqOneByteString(
-    Register heap_object, Label* target, Label::Distance distance) {
-  TemporaryRegisterScope temps(this);
-  Register scratch = temps.AcquireScratch();
-#ifdef V8_COMPRESS_POINTERS
-  LoadCompressedMap(scratch, heap_object);
-#else
-  LoadMap(scratch, heap_object);
-#endif
-  JumpIfSeqOneByteStringMap(scratch, target, distance, false);
 }
 
 inline void MaglevAssembler::CheckJSAnyIsStringAndBranch(
@@ -1137,6 +1134,40 @@ inline void SaveRegisterStateForCall::DefineSafepointWithLazyDeopt(
   masm->MaybeEmitPlaceHolderForDeopt();
 }
 
+#ifdef DEBUG
+inline void MaglevAssembler::AssertFloat64IsSmi(DoubleRegister value) {
+  TemporaryRegisterScope temps(this);
+  Register scratch = temps.Acquire();
+  Label ok, fail;
+  TryTruncateDoubleToInt32(scratch, value, &fail);
+  if (!SmiValuesAre32Bits()) {
+    CheckInt32IsSmi(scratch, &fail, scratch);
+  }
+  Jump(&ok);
+  bind(&fail);
+  Abort(AbortReason::kInputDoesNotFitSmi);
+  bind(&ok);
+}
+
+inline void MaglevAssembler::AssertHoleyFloat64IsSmi(DoubleRegister value) {
+  Label ok;
+  ZoneLabelRef fail(this);
+  {
+    TemporaryRegisterScope temps(this);
+    Register scratch = temps.Acquire();
+    JumpIfHoleNan(value, scratch, *fail);
+#ifdef V8_ENABLE_UNDEFINED_DOUBLE
+    JumpIfUndefinedNan(value, scratch, *fail);
+#endif
+  }
+  AssertFloat64IsSmi(value);
+  Jump(&ok);
+  bind(*fail);
+  Abort(AbortReason::kInputDoesNotFitSmi);
+  bind(&ok);
+}
+#endif
+
 inline void MaglevAssembler::AssertElidedWriteBarrier(
     Register object, Register value, RegisterSnapshot snapshot) {
 #if V8_VERIFY_WRITE_BARRIERS
@@ -1161,6 +1192,57 @@ inline void MaglevAssembler::AssertElidedWriteBarrier(
       ok, object, value, snapshot);
 
   JumpIfNotSmi(value, deferred_write_barrier_check);
+  bind(*ok);
+#endif  // V8_VERIFY_WRITE_BARRIERS
+}
+
+inline void MaglevAssembler::AssertElidedWriteBarrier(
+    Register object, ValueNode* value, RegisterSnapshot snapshot) {
+#if V8_VERIFY_WRITE_BARRIERS
+  if (!v8_flags.verify_write_barriers) return;
+  DCHECK(CanStoreTaggedConstant(value));
+
+  // Smis and read-only roots never need a write barrier.
+  if (value->Is<SmiConstant>()) return;
+  if (value->Is<RootConstant>()) {
+    DCHECK(RootsTable::IsReadOnly(value->Cast<RootConstant>()->index()));
+    return;
+  }
+  AssertElidedWriteBarrier(object, value->Cast<HeapConstant>()->object(),
+                           snapshot);
+#endif  // V8_VERIFY_WRITE_BARRIERS
+}
+
+inline void MaglevAssembler::AssertElidedWriteBarrier(
+    Register object, compiler::HeapObjectRef value, RegisterSnapshot snapshot) {
+#if V8_VERIFY_WRITE_BARRIERS
+  if (!v8_flags.verify_write_barriers) return;
+
+  ZoneLabelRef ok(this);
+  Label* deferred_write_barrier_check = MakeDeferredCode(
+      [](MaglevAssembler* masm, ZoneLabelRef ok, Register object,
+         compiler::HeapObjectRef value, RegisterSnapshot snapshot) {
+        // Materialize the constant in the scratch register and borrow any
+        // other register for the check; this is verification-only code, so
+        // saving it around the check is fine.
+        TemporaryRegisterScope temps(masm);
+        Register value_reg = temps.AcquireScratch();
+        masm->Move(value_reg, value.object());
+        RegList candidates = kAllocatableGeneralRegisters;
+        candidates.clear(object);
+        Register scratch = candidates.first();
+        masm->Push(scratch);
+        Label done;
+        masm->PreCheckSkippedWriteBarrier(object, value_reg, scratch, &done);
+        masm->CallVerifySkippedWriteBarrierStubSaveRegisters(
+            object, value_reg, SaveFPRegsMode::kSave);
+        masm->bind(&done);
+        masm->Pop(scratch);
+        masm->Jump(*ok);
+      },
+      ok, object, value, snapshot);
+
+  Jump(deferred_write_barrier_check);
   bind(*ok);
 #endif  // V8_VERIFY_WRITE_BARRIERS
 }

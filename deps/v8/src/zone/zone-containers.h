@@ -14,8 +14,10 @@
 #include <queue>
 #include <set>
 #include <stack>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
@@ -132,7 +134,7 @@ class ZoneVector {
       T* dst = data_;
       if constexpr (std::is_trivially_copyable_v<T>) {
         size_t size = other.size();
-        if (size) memcpy(dst, src, size * sizeof(T));
+        if (size) base::MemCopy(dst, src, size * sizeof(T));
         end_ = dst + size;
       } else if constexpr (std::is_copy_assignable_v<T>) {
         while (dst < end_ && src < other.end_) *dst++ = *src++;
@@ -336,8 +338,10 @@ class ZoneVector {
       size_t count = last - first;
       size_t assignable;
       position = PrepareForInsertion(pos, count, &assignable);
-      if constexpr (std::is_trivially_copyable_v<T>) {
-        if (count > 0) memcpy(position, first, count * sizeof(T));
+      if constexpr (std::is_trivially_copyable_v<T> && std::is_pointer_v<It> &&
+                    std::is_same_v<std::remove_cv_t<std::remove_pointer_t<It>>,
+                                   std::remove_cv_t<T>>) {
+        base::MemCopy(position, first, count * sizeof(T));
       } else {
         CopyingOverwrite(position, first, first + assignable);
         CopyToNewStorage(position + assignable, first + assignable, last);
@@ -446,25 +450,21 @@ class ZoneVector {
     }
   }
 
-#define EMIT_TRIVIAL_CASE(memcpy_function)                 \
-  DCHECK_LE(src, src_end);                                 \
-  if constexpr (std::is_trivially_copyable_v<T>) {         \
-    size_t count = src_end - src;                          \
-    /* Add V8_ASSUME to silence gcc null check warning. */ \
-    V8_ASSUME(src != nullptr);                             \
-    memcpy_function(dst, src, count * sizeof(T));          \
-    return;                                                \
-  }
-
   V8_INLINE void CopyToNewStorage(T* dst, const T* src, const T* src_end) {
-    EMIT_TRIVIAL_CASE(memcpy)
+    if constexpr (std::is_trivially_copyable_v<T>) {
+      base::MemCopy(dst, src, (src_end - src) * sizeof(T));
+      return;
+    }
     for (; src < src_end; dst++, src++) {
       CopyToNewStorage(dst, src);
     }
   }
 
   V8_INLINE void MoveToNewStorage(T* dst, T* src, const T* src_end) {
-    EMIT_TRIVIAL_CASE(memcpy)
+    if constexpr (std::is_trivially_copyable_v<T>) {
+      base::MemCopy(dst, src, (src_end - src) * sizeof(T));
+      return;
+    }
     for (; src < src_end; dst++, src++) {
       MoveToNewStorage(dst, src);
       src->~T();
@@ -472,20 +472,24 @@ class ZoneVector {
   }
 
   V8_INLINE void CopyingOverwrite(T* dst, const T* src, const T* src_end) {
-    EMIT_TRIVIAL_CASE(memmove)
+    if constexpr (std::is_trivially_copyable_v<T>) {
+      base::MemMove(dst, src, (src_end - src) * sizeof(T));
+      return;
+    }
     for (; src < src_end; dst++, src++) {
       CopyingOverwrite(dst, src);
     }
   }
 
   V8_INLINE void MovingOverwrite(T* dst, T* src, const T* src_end) {
-    EMIT_TRIVIAL_CASE(memmove)
+    if constexpr (std::is_trivially_copyable_v<T>) {
+      base::MemMove(dst, src, (src_end - src) * sizeof(T));
+      return;
+    }
     for (; src < src_end; dst++, src++) {
       MovingOverwrite(dst, src);
     }
   }
-
-#undef EMIT_TRIVIAL_CASE
 
   V8_NOINLINE V8_PRESERVE_MOST void Grow(size_t minimum) {
     T* old_data = data_;

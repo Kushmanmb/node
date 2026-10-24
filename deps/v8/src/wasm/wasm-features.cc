@@ -24,8 +24,8 @@ WasmEnabledFeatures WasmEnabledFeatures::FromFlags() {
   }
 #endif  // V8_ENABLE_DRUMBRAKE
 
-#define CHECK_FEATURE_FLAG(feat, ...)                              \
-  if (!v8_flags.wasm_jitless && v8_flags.experimental_wasm_##feat) \
+#define CHECK_FEATURE_FLAG(feat, ...)                 \
+  if (!v8_flags.wasm_jitless && v8_flags.wasm_##feat) \
     features.Add(WasmEnabledFeature::feat);
   FOREACH_WASM_FEATURE_FLAG(CHECK_FEATURE_FLAG)
 #undef CHECK_FEATURE_FLAG
@@ -42,7 +42,8 @@ WasmEnabledFeatures WasmEnabledFeatures::FromContext(
     Isolate* isolate, DirectHandle<NativeContext> context) {
   WasmEnabledFeatures features = WasmEnabledFeatures::FromFlags();
 
-  if (isolate->IsWasmCustomDescriptorsEnabled(context)) {
+  if (!v8_flags.wasm_jitless &&
+      isolate->IsWasmCustomDescriptorsEnabled(context)) {
     features.Add(WasmEnabledFeature::custom_descriptors);
   }
 

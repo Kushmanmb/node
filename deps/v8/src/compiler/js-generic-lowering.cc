@@ -4,12 +4,15 @@
 
 #include "src/compiler/js-generic-lowering.h"
 
+#include <vector>
+
 #include "src/ast/ast.h"
 #include "src/builtins/builtins-constructor.h"
 #include "src/codegen/code-factory.h"
 #include "src/codegen/interface-descriptors-inl.h"
 #include "src/compiler/access-builder.h"
 #include "src/compiler/common-operator.h"
+#include "src/compiler/frame-states.h"
 #include "src/compiler/js-graph.h"
 #include "src/compiler/js-heap-broker.h"
 #include "src/compiler/machine-operator.h"
@@ -86,6 +89,10 @@ REPLACE_STUB_CALL(RejectPromise)
 REPLACE_STUB_CALL(ResolvePromise)
 #undef REPLACE_STUB_CALL
 
+void JSGenericLowering::LowerJSAsyncFunctionAwait(Node* node) {
+  ReplaceWithBuiltinCall(node, Builtin::kAsyncFunctionAwait);
+}
+
 void JSGenericLowering::ReplaceWithBuiltinCall(Node* node, Builtin builtin) {
   CallDescriptor::Flags flags = FrameStateFlagForCall(node);
   Callable callable = Builtins::CallableFor(isolate(), builtin);
@@ -126,18 +133,15 @@ void JSGenericLowering::ReplaceWithRuntimeCall(Node* node,
   NodeProperties::ChangeOp(node, common()->Call(call_descriptor));
 }
 
-void JSGenericLowering::ReplaceUnaryOpWithBuiltinCall(
-    Node* node, Builtin builtin_without_feedback,
-    Builtin builtin_with_feedback) {
-  DCHECK(JSOperator::IsUnaryWithFeedback(node->opcode()));
-  node->RemoveInput(JSUnaryOpNode::FeedbackVectorIndex());
-  ReplaceWithBuiltinCall(node, builtin_without_feedback);
+void JSGenericLowering::ReplaceUnaryOpWithBuiltinCall(Node* node,
+                                                      Builtin builtin) {
+  DCHECK(JSOperator::IsUnaryWithEmbeddedFeedback(node->opcode()));
+  ReplaceWithBuiltinCall(node, builtin);
 }
 
-#define DEF_UNARY_LOWERING(Name)                                    \
-  void JSGenericLowering::LowerJS##Name(Node* node) {               \
-    ReplaceUnaryOpWithBuiltinCall(node, Builtin::k##Name,           \
-                                  Builtin::k##Name##_WithFeedback); \
+#define DEF_UNARY_LOWERING(Name)                           \
+  void JSGenericLowering::LowerJS##Name(Node* node) {      \
+    ReplaceUnaryOpWithBuiltinCall(node, Builtin::k##Name); \
   }
 DEF_UNARY_LOWERING(BitwiseNot)
 DEF_UNARY_LOWERING(Decrement)
@@ -148,8 +152,11 @@ DEF_UNARY_LOWERING(Negate)
 void JSGenericLowering::ReplaceBinaryOpWithBuiltinCall(
     Node* node, Builtin builtin_without_feedback,
     Builtin builtin_with_feedback) {
-  DCHECK(JSOperator::IsBinaryWithFeedback(node->opcode()));
-  node->RemoveInput(JSBinaryOpNode::FeedbackVectorIndex());
+  DCHECK(JSOperator::IsBinaryWithFeedback(node->opcode()) ||
+         (JSOperator::IsBinaryWithEmbeddedFeedback(node->opcode())));
+  if (node->op()->ValueInputCount() > 2) {
+    node->RemoveInput(JSBinaryOpNode::FeedbackVectorIndex());
+  }
   ReplaceWithBuiltinCall(node, builtin_without_feedback);
 }
 
@@ -158,6 +165,13 @@ void JSGenericLowering::ReplaceBinaryOpWithBuiltinCall(
     ReplaceBinaryOpWithBuiltinCall(node, Builtin::k##Name,           \
                                    Builtin::k##Name##_WithFeedback); \
   }
+
+#define DEF_BINARY_WITH_EMBEDDED_FEEDBACK_LOWERING(Name)                     \
+  void JSGenericLowering::LowerJS##Name(Node* node) {                        \
+    ReplaceBinaryOpWithBuiltinCall(node, Builtin::k##Name,                   \
+                                   Builtin::k##Name##_WithEmbeddedFeedback); \
+  }
+
 // Binary ops.
 DEF_BINARY_LOWERING(Add)
 DEF_BINARY_LOWERING(BitwiseAnd)
@@ -172,20 +186,20 @@ DEF_BINARY_LOWERING(ShiftRight)
 DEF_BINARY_LOWERING(ShiftRightLogical)
 DEF_BINARY_LOWERING(Subtract)
 // Compare ops.
-DEF_BINARY_LOWERING(Equal)
-DEF_BINARY_LOWERING(GreaterThan)
-DEF_BINARY_LOWERING(GreaterThanOrEqual)
+DEF_BINARY_WITH_EMBEDDED_FEEDBACK_LOWERING(Equal)
+DEF_BINARY_WITH_EMBEDDED_FEEDBACK_LOWERING(GreaterThan)
+DEF_BINARY_WITH_EMBEDDED_FEEDBACK_LOWERING(GreaterThanOrEqual)
 DEF_BINARY_LOWERING(InstanceOf)
-DEF_BINARY_LOWERING(LessThan)
-DEF_BINARY_LOWERING(LessThanOrEqual)
+DEF_BINARY_WITH_EMBEDDED_FEEDBACK_LOWERING(LessThan)
+DEF_BINARY_WITH_EMBEDDED_FEEDBACK_LOWERING(LessThanOrEqual)
 #undef DEF_BINARY_LOWERING
+#undef DEF_BINARY_WITH_EMBEDDED_FEEDBACK_LOWERING
 
 void JSGenericLowering::LowerJSStrictEqual(Node* node) {
   // The === operator doesn't need the current context.
   NodeProperties::ReplaceContextInput(node, jsgraph()->NoContextConstant());
   DCHECK_EQ(node->op()->ControlInputCount(), 1);
   node->RemoveInput(NodeProperties::FirstControlIndex(node));
-  node->RemoveInput(JSStrictEqualNode::FeedbackVectorIndex());
 
   Callable callable = Builtins::CallableFor(isolate(), Builtin::kStrictEqual);
   ReplaceWithBuiltinCall(node, callable, CallDescriptor::kNoFlags,
@@ -696,7 +710,6 @@ void JSGenericLowering::LowerJSCreateFunctionContext(Node* node) {
 }
 
 void JSGenericLowering::LowerJSCreateGeneratorObject(Node* node) {
-  node->RemoveInput(4);  // control
   ReplaceWithBuiltinCall(node, Builtin::kCreateGeneratorObject);
 }
 
@@ -1125,6 +1138,13 @@ void JSGenericLowering::LowerJSForInNext(Node* node) {
 }
 
 void JSGenericLowering::LowerJSForOfNext(Node* node) {
+  JSForOfNextNode n(node);
+  ForOfNextParameters const& p = n.Parameters();
+
+  Node* call_slot = jsgraph()->SmiConstant(p.callFeedback().slot.ToInt());
+  static_assert(n.FeedbackVectorIndex() == 2);
+
+  node->InsertInput(zone(), 3, call_slot);
   ReplaceWithBuiltinCall(node, Builtin::kForOfNext);
 }
 

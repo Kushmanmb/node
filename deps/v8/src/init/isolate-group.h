@@ -5,10 +5,12 @@
 #ifndef V8_INIT_ISOLATE_GROUP_H_
 #define V8_INIT_ISOLATE_GROUP_H_
 
+#include <atomic>
 #include <memory>
+#include <span>
 
 #include "absl/container/flat_hash_set.h"
-#include "include/v8-memory-span.h"
+#include "include/v8config.h"
 #include "src/base/logging.h"
 #include "src/base/once.h"
 #include "src/base/page-allocator.h"
@@ -18,12 +20,8 @@
 #include "src/flags/flags.h"
 #include "src/heap/memory-chunk-constants.h"
 #include "src/sandbox/check.h"
-#include "src/sandbox/code-pointer-table.h"
-#include "src/utils/allocation.h"
-
-#ifdef V8_ENABLE_LEAPTIERING
 #include "src/sandbox/js-dispatch-table.h"
-#endif  // V8_ENABLE_LEAPTIERING
+#include "src/utils/allocation.h"
 
 #ifdef V8_ENABLE_SANDBOX
 #include "src/base/region-allocator.h"
@@ -39,90 +37,11 @@ class LeakyObject;
 
 namespace internal {
 
-class MemoryPool;
-
-#ifdef V8_ENABLE_SANDBOX
-class MemoryChunkMetadata;
-class Sandbox;
-
-class SandboxedArrayBufferAllocatorBase {
- public:
-  virtual void* Allocate(size_t length) = 0;
-  virtual void* AllocateUninitialized(size_t length) = 0;
-  virtual void Free(void* ptr) = 0;
-};
-
-// Backend allocator shared by all ArrayBufferAllocator instances inside one
-// sandbox. This way, there is a single region of virtual address space
-// reserved inside a sandbox from which all ArrayBufferAllocators allocate
-// their memory, instead of each allocator creating their own region, which
-// may cause address space exhaustion inside the sandbox.
-// TODO(chromium:1340224): replace this with a more efficient allocator.
-class SandboxedArrayBufferAllocator final
-    : public SandboxedArrayBufferAllocatorBase {
- public:
-  SandboxedArrayBufferAllocator() = default;
-
-  SandboxedArrayBufferAllocator(const SandboxedArrayBufferAllocator&) = delete;
-  SandboxedArrayBufferAllocator& operator=(
-      const SandboxedArrayBufferAllocator&) = delete;
-
-  ~SandboxedArrayBufferAllocator() = default;
-
-  void LazyInitialize(Sandbox* sandbox);
-
-  void* Allocate(size_t length) override;
-  void* AllocateUninitialized(size_t length) override;
-  void Free(void* data) override;
-
-  void TearDown();
-
- private:
-  // Use a region allocator with a "page size" of 128 bytes as a reasonable
-  // compromise between the number of regions it has to manage and the amount
-  // of memory wasted due to rounding allocation sizes up to the page size.
-  static constexpr size_t kAllocationGranularity = 128;
-  // The backing memory's accessible region is grown in chunks of this size.
-  static constexpr size_t kChunkSize = 1 * MB;
-
-  bool is_initialized() const { return !!sandbox_; }
-
-  std::unique_ptr<base::RegionAllocator> region_alloc_;
-  size_t end_of_accessible_region_ = 0;
-  Sandbox* sandbox_ = nullptr;
-  base::Mutex mutex_;
-};
-
-#ifdef V8_ENABLE_PARTITION_ALLOC
-class PABackedSandboxedArrayBufferAllocator
-    : public SandboxedArrayBufferAllocatorBase {
- public:
-  PABackedSandboxedArrayBufferAllocator();
-  ~PABackedSandboxedArrayBufferAllocator();
-
-  PABackedSandboxedArrayBufferAllocator(
-      const PABackedSandboxedArrayBufferAllocator&) = delete;
-  PABackedSandboxedArrayBufferAllocator& operator=(
-      const PABackedSandboxedArrayBufferAllocator&) = delete;
-
-  void LazyInitialize(Sandbox* sandbox);
-
-  void* Allocate(size_t length) override;
-  void* AllocateUninitialized(size_t length) override;
-  void Free(void* data) override;
-
-  void TearDown();
-
- private:
-  class Impl;
-
-  std::unique_ptr<Impl> impl_;
-};
-#endif  // V8_ENABLE_PARTITION_ALLOC
-#endif  // V8_ENABLE_SANDBOX
-
+class BasePage;
 class CodeRange;
+class GlobalSafepoint;
 class Isolate;
+class MemoryPool;
 class OptimizingCompileTaskExecutor;
 class ReadOnlyHeap;
 class ReadOnlyArtifacts;
@@ -153,8 +72,12 @@ class SnapshotData;
 class V8_EXPORT_PRIVATE IsolateGroup final {
  public:
 #ifdef V8_ENABLE_SANDBOX
-  class MemoryChunkMetadataTableEntry {
+  class BasePageTableEntry {
    public:
+    // This indicates that the metadata entry can be read from any isolates
+    // (in essence, for the read-only or shared pages).
+    static constexpr uintptr_t kReadOnlyOrSharedEntryIsolateSentinel = -1;
+
     void CheckIfMetadataAccessibleFromIsolate(const Isolate* isolate) const {
       if (isolate_ ==
           reinterpret_cast<Isolate*>(kReadOnlyOrSharedEntryIsolateSentinel)) {
@@ -167,23 +90,20 @@ class V8_EXPORT_PRIVATE IsolateGroup final {
       CHECK_EQ(isolate_, isolate);
     }
 
-    void SetMetadata(MemoryChunkMetadata* metadata, Isolate* isolate);
+    void SetMetadata(BasePage* metadata, Isolate* isolate);
 
     const Isolate* isolate() const { return isolate_; }
-    MemoryChunkMetadata* metadata() const { return metadata_; }
+    BasePage* metadata() const { return metadata_; }
 
-    MemoryChunkMetadata** metadata_slot() { return &metadata_; }
+    BasePage** metadata_slot() { return &metadata_; }
 
    private:
-    // This indicates that the metadata entry can be read from any isolates
-    // (in essence, for the read-only or shared pages).
-    static constexpr uintptr_t kReadOnlyOrSharedEntryIsolateSentinel = -1;
+    friend class CodeStubAssembler;
 
-    MemoryChunkMetadata* metadata_ = nullptr;
+    BasePage* metadata_ = nullptr;
     Isolate* isolate_ = nullptr;
   };
-  static_assert(sizeof(MemoryChunkMetadataTableEntry) ==
-                2 * kSystemPointerSize);
+  static_assert(sizeof(BasePageTableEntry) == 2 * kSystemPointerSize);
 #endif  // V8_ENABLE_SANDBOX
 
   // InitializeOncePerProcess should be called early on to initialize the
@@ -256,7 +176,7 @@ class V8_EXPORT_PRIVATE IsolateGroup final {
   static IsolateGroup* current() { return GetDefault(); }
 #endif  // V8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES
 
-  MemorySpan<Address> external_ref_table() { return external_ref_table_; }
+  std::span<Address> external_ref_table() { return external_ref_table_; }
 
   bool has_shared_space_isolate() const {
     return shared_space_isolate_ != nullptr;
@@ -270,6 +190,8 @@ class V8_EXPORT_PRIVATE IsolateGroup final {
     DCHECK(!has_shared_space_isolate());
     shared_space_isolate_ = isolate;
   }
+
+  GlobalSafepoint* global_safepoint() const { return global_safepoint_.get(); }
 
   OptimizingCompileTaskExecutor* optimizing_compile_task_executor();
 
@@ -295,24 +217,22 @@ class V8_EXPORT_PRIVATE IsolateGroup final {
 
   Sandbox* sandbox() { return sandbox_; }
 
-  CodePointerTable* code_pointer_table() { return &code_pointer_table_; }
-
-  MemoryChunkMetadataTableEntry* metadata_pointer_table() {
+  BasePageTableEntry* metadata_pointer_table() {
     return metadata_pointer_table_;
   }
 
-  SandboxedArrayBufferAllocatorBase* GetSandboxedArrayBufferAllocator();
+  v8::Allocator* GetInSandboxAllocator();
 #endif  // V8_ENABLE_SANDBOX
-
-#ifdef V8_ENABLE_LEAPTIERING
-  JSDispatchTable* js_dispatch_table() { return &js_dispatch_table_; }
-#endif  // V8_ENABLE_LEAPTIERING
 
   void SetupReadOnlyHeap(Isolate* isolate,
                          SnapshotData* read_only_snapshot_data,
                          bool can_rehash);
   void AddIsolate(Isolate* isolate);
   void RemoveIsolate(Isolate* isolate);
+
+  size_t GetIsolateCount();
+
+  Isolate* main_isolate() { return main_isolate_; }
 
   MemoryPool* memory_pool() const { return memory_pool_.get(); }
 
@@ -322,7 +242,11 @@ class V8_EXPORT_PRIVATE IsolateGroup final {
     // down in the mean time.
     base::MutexGuard group_guard(mutex_);
     Isolate* target_isolate = nullptr;
-    DCHECK_NOT_NULL(main_isolate_);
+    // main_isolate_ can be set nullptr when the IsolateGroup is being
+    // destructed.
+    if (!main_isolate_) {
+      return false;
+    }
 
     if (main_isolate_ != isolate) {
       target_isolate = main_isolate_;
@@ -403,6 +327,8 @@ class V8_EXPORT_PRIVATE IsolateGroup final {
   std::unique_ptr<ReadOnlyArtifacts> read_only_artifacts_;
   ReadOnlyHeap* shared_read_only_heap_ = nullptr;
   Isolate* shared_space_isolate_ = nullptr;
+  // Used to track and safepoint all isolates in this isolate group.
+  std::unique_ptr<GlobalSafepoint> global_safepoint_;
   std::unique_ptr<OptimizingCompileTaskExecutor>
       optimizing_compile_task_executor_;
 
@@ -416,20 +342,10 @@ class V8_EXPORT_PRIVATE IsolateGroup final {
 
 #ifdef V8_ENABLE_SANDBOX
   Sandbox* sandbox_ = nullptr;
-  CodePointerTable code_pointer_table_;
-  MemoryChunkMetadataTableEntry metadata_pointer_table_
+  BasePageTableEntry metadata_pointer_table_
       [MemoryChunkConstants::kMetadataPointerTableSize]{};
-#ifdef V8_ENABLE_PARTITION_ALLOC
-  PABackedSandboxedArrayBufferAllocator backend_allocator_;
-#else
-  SandboxedArrayBufferAllocator backend_allocator_;
-#endif
   TrustedRange trusted_range_;
 #endif  // V8_ENABLE_SANDBOX
-
-#ifdef V8_ENABLE_LEAPTIERING
-  JSDispatchTable js_dispatch_table_;
-#endif  // V8_ENABLE_LEAPTIERING
 };
 
 }  // namespace internal

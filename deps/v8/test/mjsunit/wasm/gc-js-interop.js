@@ -18,13 +18,10 @@ for (const wasm_obj of [struct, array]) {
   testThrowsRepeated(
       () => Object.prototype.__proto__.call(wasm_obj), TypeError);
   testThrowsRepeated(() => wasm_obj.__proto__ = null, TypeError);
+  // Wasm objects have no properties.
+  repeated(() => { for (let p in wasm_obj) { assertUnreachable(); } });
   testThrowsRepeated(() => {
-    for (let p in wasm_obj) {
-    }
-  }, TypeError);
-  testThrowsRepeated(() => {
-    for (let p of wasm_obj) {
-    }
+    for (let p of wasm_obj) {}
   }, TypeError);
   testThrowsRepeated(() => wasm_obj.toString(), TypeError);
   testThrowsRepeated(() => wasm_obj.valueOf(), TypeError);
@@ -103,12 +100,14 @@ for (const wasm_obj of [struct, array]) {
   testThrowsRepeated(
       () => {class SubClass extends wasm_obj {}}, TypeError,
       'Class extends value [object Object] is not a constructor or null');
-  repeated(() => {
+  {
     class TestMemberInit {
       x = wasm_obj;
-    };
-    assertSame(wasm_obj, new TestMemberInit().x);
-  });
+    }
+    repeated(() => {
+      assertSame(wasm_obj, new TestMemberInit().x);
+    });
+  }
   repeated(() => assertSame(wasm_obj, eval('wasm_obj')));
 
   // Test functions of the global object.

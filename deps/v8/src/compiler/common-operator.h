@@ -148,12 +148,13 @@ class DeoptimizeParameters final {
   FeedbackSource const feedback_;
 };
 
-bool operator==(DeoptimizeParameters, DeoptimizeParameters);
-bool operator!=(DeoptimizeParameters, DeoptimizeParameters);
+V8_EXPORT_PRIVATE bool operator==(DeoptimizeParameters, DeoptimizeParameters);
+V8_EXPORT_PRIVATE bool operator!=(DeoptimizeParameters, DeoptimizeParameters);
 
-size_t hast_value(DeoptimizeParameters p);
+V8_EXPORT_PRIVATE size_t hash_value(DeoptimizeParameters p);
 
-std::ostream& operator<<(std::ostream&, DeoptimizeParameters p);
+V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream&,
+                                           DeoptimizeParameters p);
 
 DeoptimizeParameters const& DeoptimizeParametersOf(Operator const* const)
     V8_WARN_UNUSED_RESULT;
@@ -555,6 +556,7 @@ class V8_EXPORT_PRIVATE CommonOperatorBuilder final
   const Operator* DeadValue(MachineRepresentation rep,
                             int value_input_count = 1);
   const Operator* Unreachable();
+  const Operator* MajorGCForCompilerTesting();
   const Operator* StaticAssert(const char* source);
   // SLVerifierHint is used only during SimplifiedLowering. It may be introduced
   // during lowering to provide additional hints for the verifier. These nodes
@@ -595,7 +597,8 @@ class V8_EXPORT_PRIVATE CommonOperatorBuilder final
   const Operator* Terminate();
 
   const Operator* Start(int value_output_count);
-  const Operator* Loop(int control_input_count);
+  const Operator* Loop(int control_input_count,
+                       const FeedbackSource& feedback = {});
   const Operator* Merge(int control_input_count);
   const Operator* Parameter(int index, const char* debug_name = nullptr);
 

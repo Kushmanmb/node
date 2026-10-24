@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --experimental-wasm-custom-descriptors
+// Flags: --wasm-custom-descriptors
 
 d8.file.execute("test/mjsunit/wasm/wasm-module-builder.js");
 
@@ -16,7 +16,7 @@ let $s2 = builder.addStruct({fields: [i32_field], supertype: $s1});
 
 let sig_r_v = makeSig([], [kWasmAnyRef]);
 let sig_v_r = makeSig([kWasmAnyRef], []);
-let sig_i_r = makeSig([kWasmAnyRef], [kWasmI32])
+let sig_i_r = makeSig([kWasmAnyRef], [kWasmI32]);
 
 function MakeFunctions(type_index) {
   builder.addFunction("make_s" + type_index, sig_r_v).exportFunc().addBody([
@@ -28,6 +28,11 @@ function MakeFunctions(type_index) {
     kGCPrefix, kExprRefCast, kWasmExact, type_index,
     kExprDrop,
   ]);
+
+  let sig_v_exact_s = makeSig([wasmRefType(type_index).exact()], []);
+  builder.addFunction("implicit_cast_s" + type_index, sig_v_exact_s)
+    .exportFunc()
+    .addBody([]);
 
   builder.addFunction("test_s" + type_index, sig_i_r).exportFunc().addBody([
     kExprLocalGet, 0,
@@ -79,6 +84,14 @@ assertThrows(() => wasm.cast_s0(s1), WebAssembly.RuntimeError, "illegal cast");
 wasm.cast_s1(s1);
 assertThrows(() => wasm.cast_s2(s1), WebAssembly.RuntimeError, "illegal cast");
 
+assertThrows(
+    () => wasm.implicit_cast_s0(s1), TypeError,
+    "type incompatibility when transforming from/to JS");
+wasm.implicit_cast_s1(s1);
+assertThrows(
+    () => wasm.implicit_cast_s2(s1), TypeError,
+    "type incompatibility when transforming from/to JS");
+
 assertThrows(() => wasm.cast_s1(s2), WebAssembly.RuntimeError, "illegal cast");
 wasm.cast_s2(s2);
 
@@ -126,3 +139,70 @@ assertEquals(1, wasm.br_on_cast_fail_exact_s2(s0));
 assertEquals(1, wasm.br_on_cast_fail_exact_s2(s1));
 assertEquals(0, wasm.br_on_cast_fail_exact_s2(s2));
 assertEquals(1, wasm.br_on_cast_fail_exact_s2(null));
+
+(function TestExactArray() {
+  let builder = new WasmModuleBuilder();
+  builder.startRecGroup();
+  let $super = builder.addArray(kWasmI32, {is_mut: false});
+  let $sub = builder.addArray(kWasmI32, {supertype: $super, is_mut: false});
+  builder.endRecGroup();
+
+  builder.addFunction("test_cast", kSig_v_v).exportFunc()
+    .addLocals(wasmRefType($super), 1)
+    .addBody([
+      kExprI32Const, 0,
+      kGCPrefix, kExprArrayNewDefault, $super,
+      kExprLocalSet, 0,
+      kExprLocalGet, 0,
+      kGCPrefix, kExprRefCast, kWasmExact, $super,
+      kExprDrop,
+    ]);
+
+  builder.addFunction("test_type_check", kSig_i_v).exportFunc()
+    .addLocals(wasmRefType($super), 1)
+    .addBody([
+      kExprI32Const, 0,
+      kGCPrefix, kExprArrayNewDefault, $super,
+      kExprLocalSet, 0,
+      kExprLocalGet, 0,
+      kGCPrefix, kExprRefTest, kWasmExact, $sub,
+    ]);
+
+  let instance = builder.instantiate();
+  instance.exports.test_cast();
+  assertEquals(0, instance.exports.test_type_check());
+})();
+
+(function TestExactRefFunc() {
+  let builder = new WasmModuleBuilder();
+  builder.startRecGroup();
+  let $super = builder.addType(kSig_v_v, kNoSuperType, false);
+  let $sub = builder.addType(kSig_v_v, $super, false);
+  builder.endRecGroup();
+
+  let f = builder.addFunction("f", $super).addBody([]);
+  builder.addDeclarativeElementSegment([f.index]);
+
+  builder.addFunction("test_cast", kSig_v_v).exportFunc()
+    .addLocals(wasmRefType($super), 1)
+    .addBody([
+      kExprRefFunc, f.index,
+      kExprLocalSet, 0,
+      kExprLocalGet, 0,
+      kGCPrefix, kExprRefCast, kWasmExact, $super,
+      kExprDrop,
+    ]);
+
+  builder.addFunction("test_type_check", kSig_i_v).exportFunc()
+    .addLocals(wasmRefType($super), 1)
+    .addBody([
+      kExprRefFunc, f.index,
+      kExprLocalSet, 0,
+      kExprLocalGet, 0,
+      kGCPrefix, kExprRefTest, kWasmExact, $sub,
+    ]);
+
+  let instance = builder.instantiate();
+  instance.exports.test_cast();
+  assertEquals(0, instance.exports.test_type_check());
+})();

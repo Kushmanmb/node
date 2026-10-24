@@ -174,7 +174,8 @@ bool Runtime::IsNonReturning(FunctionId id) {
 #if V8_ENABLE_WEBASSEMBLY
     case Runtime::kThrowWasmError:
     case Runtime::kThrowWasmStackOverflow:
-    case Runtime::kThrowWasmSuspendError:
+    case Runtime::kThrowWasmJSPISuspendError:
+    case Runtime::kThrowWasmFXSuspendError:
 #endif  // V8_ENABLE_WEBASSEMBLY
       return true;
     default:
@@ -229,6 +230,7 @@ bool Runtime::IsEnabledForFuzzing(FunctionId id) {
       case Runtime::kPrepareFunctionForOptimization:
       case Runtime::kPretenureAllocationSite:
       case Runtime::kSetAllocationTimeout:
+      case Runtime::kSetDispatchTableGCInterval:
       case Runtime::kSetForceSlowPath:
       case Runtime::kSimulateNewspaceFull:
       case Runtime::kWaitForBackgroundOptimization:
@@ -270,7 +272,10 @@ bool Runtime::IsEnabledForFuzzing(FunctionId id) {
     case Runtime::kGetFunctionForCurrentFrame:
     case Runtime::kGetCallable:
     case Runtime::kGetAbstractModuleSource:
+    case Runtime::kAssertNotPeeled:
+    case Runtime::kAssertPeeled:
     case Runtime::kTurbofanStaticAssert:
+    case Runtime::kAssertEscapeAnalysisElided:
     case Runtime::kClearFunctionFeedback:
     case Runtime::kStringIsFlat:
     case Runtime::kGetInitializerFunction:
@@ -286,10 +291,6 @@ bool Runtime::IsEnabledForFuzzing(FunctionId id) {
 #endif  // V8_ENABLE_WEBASSEMBLY
     // TODO(353685107): investigate whether these should be exposed to fuzzers.
     case Runtime::kConstructDouble:
-    case Runtime::kConstructConsString:
-    case Runtime::kConstructSlicedString:
-    case Runtime::kConstructInternalizedString:
-    case Runtime::kConstructThinString:
     // TODO(353971258): investigate whether this should be exposed to fuzzers.
     case Runtime::kSerializeDeserializeNow:
     // TODO(353928347): investigate whether this should be exposed to fuzzers.
@@ -301,12 +302,32 @@ bool Runtime::IsEnabledForFuzzing(FunctionId id) {
     case Runtime::kLeakHole:
       return v8_flags.hole_fuzzing;
 
+    case Runtime::kGetBytecode:
+      // %GetBytecode is designed for sandbox fuzzing. It is not safe to be
+      // used during regular fuzzing as it exposes the objects in the
+      // BytecodeArray's constant pool (which may be internal objects such
+      // as ScopeInfo) to the caller.
+      return v8_flags.sandbox_testing || v8_flags.sandbox_fuzzing;
+
+    case Runtime::kInstallBytecode:
+      // %InstallBytecode allows installing manipulated bytecode that has
+      // only been checked for sandbox safety, not general correctness.
+      // Therefore, it is restricted to sandbox fuzzing with full bytecode
+      // verification enabled, preventing trivial sandbox violation alarms.
+      return (v8_flags.sandbox_testing || v8_flags.sandbox_fuzzing) &&
+             v8_flags.verify_bytecode_full;
+
+    case Runtime::kIsSmi:
+      return true;  // Enabled when not performing differential fuzzing.
+
     default:
       break;
   }
 
   // The default case: test functions are exposed, everything else is not.
   switch (id) {
+    // Functions used in testing and outside
+    case Runtime::kArrayBufferDetach:
 #define F(name, nargs, ressize, ...) case k##name:
 #define I(name, nargs, ressize, ...) case kInline##name:
     FOR_EACH_INTRINSIC_TEST(F, I)

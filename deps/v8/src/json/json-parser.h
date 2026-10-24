@@ -8,6 +8,8 @@
 #include <optional>
 
 #include "include/v8-callbacks.h"
+#include "src/base/bit-field.h"
+#include "src/base/macros.h"
 #include "src/base/small-vector.h"
 #include "src/base/strings.h"
 #include "src/codegen/script-details.h"
@@ -164,7 +166,45 @@ enum class JsonToken : uint8_t {
   EOS
 };
 
-// A simple json parser.
+template <JsonToken token, JsonToken... tokens>
+concept JsonTokenIsOneOf = ((token == tokens) || ...);
+
+template <JsonToken token>
+concept JsonTokenIsCharacter =
+    JsonTokenIsOneOf<token, JsonToken::STRING, JsonToken::LBRACE,
+                     JsonToken::RBRACE, JsonToken::LBRACK, JsonToken::RBRACK,
+                     JsonToken::TRUE_LITERAL, JsonToken::FALSE_LITERAL,
+                     JsonToken::NULL_LITERAL, JsonToken::COLON,
+                     JsonToken::COMMA>;
+
+constexpr uint8_t JsonTokenToCharacter(JsonToken token) {
+  switch (token) {
+    case JsonToken::STRING:
+      return '"';
+    case JsonToken::LBRACE:
+      return '{';
+    case JsonToken::RBRACE:
+      return '}';
+    case JsonToken::LBRACK:
+      return '[';
+    case JsonToken::RBRACK:
+      return ']';
+    case JsonToken::TRUE_LITERAL:
+      return 't';
+    case JsonToken::FALSE_LITERAL:
+      return 'f';
+    case JsonToken::NULL_LITERAL:
+      return 'n';
+    case JsonToken::COLON:
+      return ':';
+    case JsonToken::COMMA:
+      return ',';
+    default:
+      CONSTEXPR_UNREACHABLE();
+  }
+}
+
+// A json parser.
 template <typename Char>
 class JsonParser final {
  public:
@@ -193,20 +233,32 @@ class JsonParser final {
     enum Type : uint8_t { kReturn, kObjectProperty, kArrayElement };
     JsonContinuation(Isolate* isolate, Type type, size_t index)
         : scope(isolate),
-          type_(type),
-          index(static_cast<uint32_t>(index)),
           max_index(0),
-          elements(0) {}
+          elements(0),
+          fast_keys_matched(false),
+          type_and_index_(TypeField::encode(type) | IndexField::encode(index)) {
+    }
 
-    Type type() const { return static_cast<Type>(type_); }
-    void set_type(Type type) { type_ = static_cast<uint8_t>(type); }
+    Type type() const { return TypeField::decode(type_and_index_); }
+    void set_type(Type type) {
+      type_and_index_ = TypeField::update(type_and_index_, type);
+    }
+
+    size_t index() const { return IndexField::decode(type_and_index_); }
 
     HandleScope scope;
-    // Unfortunately GCC doesn't like packing Type in two bits.
-    uint32_t type_ : 2;
-    uint32_t index : 30;
     uint32_t max_index;
     uint32_t elements;
+    // True if ParseJsonObjectProperties<FastIterableState::kJsonFast> matched
+    // all property keys against the feedback map in exact sequence with no
+    // trailing properties. Used by BuildJsonObject for direct layout
+    // allocation.
+    bool fast_keys_matched;
+
+   private:
+    using TypeField = base::BitField<Type, 0, 2>;
+    using IndexField = TypeField::template Next<size_t, 30>;
+    uint32_t type_and_index_;
   };
 
   JsonParser(Isolate* isolate, Handle<String> source,
@@ -225,7 +277,7 @@ class JsonParser final {
 
   void advance() { ++cursor_; }
 
-  base::uc32 CurrentCharacter() {
+  base::uc32 CurrentCharacter() const {
     if (V8_UNLIKELY(is_at_end())) return kEndOfString;
     return *cursor_;
   }
@@ -237,37 +289,58 @@ class JsonParser final {
 
   void AdvanceToNonDecimal();
 
-  V8_INLINE JsonToken peek() const { return next_; }
+  V8_INLINE JsonToken peek() const;
 
   void Consume(JsonToken token) {
     DCHECK_EQ(peek(), token);
     advance();
   }
 
+  template <JsonToken token>
+  V8_INLINE bool IsNextToken() {
+    if constexpr (token == JsonToken::EOS) {
+      return is_at_end();
+    } else if constexpr (JsonTokenIsCharacter<token>) {
+      constexpr Char expected_char = JsonTokenToCharacter(token);
+      return V8_LIKELY(expected_char == CurrentCharacter());
+    } else {
+      return false;
+    }
+  }
+
+  template <JsonToken token>
+  V8_WARN_UNUSED_RESULT bool Check() {
+    if (V8_LIKELY(IsNextToken<token>())) {
+      advance();
+      return true;
+    }
+    GetNextNonWhitespaceToken();
+    if (peek() == token) {
+      advance();
+      return true;
+    }
+    return false;
+  }
+
+  template <JsonToken token>
   V8_WARN_UNUSED_RESULT bool Expect(
-      JsonToken token,
       std::optional<MessageTemplate> errorMessage = std::nullopt) {
     if (V8_LIKELY(peek() == token)) {
       advance();
       return true;
     }
-    errorMessage ? ReportUnexpectedToken(peek(), errorMessage.value())
-                 : ReportUnexpectedToken(peek());
+    ReportUnexpectedToken(peek(), errorMessage);
     return false;
   }
 
+  template <JsonToken token>
   V8_WARN_UNUSED_RESULT bool ExpectNext(
-      JsonToken token,
-      std::optional<MessageTemplate> errorMessage = std::nullopt) {
-    SkipWhitespace();
-    return errorMessage ? Expect(token, errorMessage.value()) : Expect(token);
-  }
-
-  V8_WARN_UNUSED_RESULT bool Check(JsonToken token) {
-    SkipWhitespace();
-    if (next_ != token) return false;
-    advance();
-    return true;
+      std::optional<MessageTemplate> errorMessage) {
+    if (Check<token>()) {
+      return true;
+    }
+    ReportUnexpectedToken(peek(), errorMessage);
+    return false;
   }
 
   template <size_t N>
@@ -300,7 +373,7 @@ class JsonParser final {
   // The JSON lexical grammar is specified in the ECMAScript 5 standard,
   // section 15.12.1.1. The only allowed whitespace characters between tokens
   // are tab, carriage-return, newline and space.
-  void SkipWhitespace();
+  void GetNextNonWhitespaceToken();
 
   // A JSON string (production JSONString) is subset of valid JavaScript string
   // literals. The string must only be double-quoted (not single-quoted), and
@@ -310,6 +383,12 @@ class JsonParser final {
   JsonString ScanJsonPropertyKey(JsonContinuation* cont);
   base::uc32 ScanUnicodeCharacter();
   base::Vector<const Char> GetKeyChars(JsonString key) {
+    // For escaped keys the source range starting at `key.start()` holds the raw
+    // (undecoded) characters while `key.length()` is the decoded length, so the
+    // bytes here do not represent the actual decoded key. Return an empty
+    // vector to signal that the byte-compare transition fast path must be
+    // skipped (see JSDataObjectBuilder::TryFastTransitionToPropertyKey).
+    if (key.has_escape()) return base::Vector<const Char>();
     return base::Vector<const Char>(chars_ + key.start(), key.length());
   }
   Handle<String> MakeString(const JsonString& string,
@@ -348,7 +427,8 @@ class JsonParser final {
   template <DescriptorArray::FastIterableState fast_iterable_state>
   V8_INLINE bool ParseJsonObjectProperties(JsonContinuation* cont,
                                            MessageTemplate first_token_msg,
-                                           Handle<DescriptorArray> descriptors);
+                                           Handle<DescriptorArray> descriptors,
+                                           uint16_t nof_descriptors);
   V8_INLINE bool ParseJsonPropertyValue(const JsonString& key);
   V8_INLINE bool FastKeyMatch(const uint8_t* key_chars, uint32_t key_length);
   V8_INLINE bool FastKeyMatch(const uint8_t* key_chars, uint32_t key_length,
@@ -398,7 +478,11 @@ class JsonParser final {
 
   void UpdatePointers() {
     DisallowGarbageCollection no_gc;
+    // Keeping the `GetChars()` result is safe because we update the pointer in
+    // the GCEpilogueCallback.
+    START_IGNORE_LIFETIME_SAFETY_WARNINGS();
     const Char* chars = Cast<SeqString>(source_)->GetChars(no_gc);
+    END_IGNORE_LIFETIME_SAFETY_WARNINGS();
     if (chars_ != chars) {
       size_t position = cursor_ - chars_;
       size_t length = end_ - chars_;
@@ -448,6 +532,10 @@ class JsonParser final {
   const Char* cursor_;
   const Char* end_;
   const Char* chars_;
+
+  // Remaining budget for heuristic internalization of non-key, short one-byte
+  // strings.
+  uint32_t remaining_heuristic_internalizations_;
 };
 
 // Explicit instantiation declarations.
