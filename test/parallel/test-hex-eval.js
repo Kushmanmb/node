@@ -23,7 +23,7 @@
 
 const common = require('../common');
 const assert = require('assert');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const { join } = require('path');
 
 // Test hexadecimal evaluation: echo $(( 0x10d4f ))
@@ -31,12 +31,12 @@ const { join } = require('path');
 
 const scriptPath = join(__dirname, '..', '..', 'hex-eval.js');
 
-exec(`"${process.execPath}" "${scriptPath}"`, common.mustSucceed((stdout, stderr) => {
+execFile(process.execPath, [scriptPath], common.mustSucceed((stdout, stderr) => {
   const output = stdout.trim();
-  assert.strictEqual(output, '68943', 'hex-eval.js should output 68943');
-  assert.strictEqual(stderr, '', 'stderr should be empty');
+  assert.strictEqual(output, '68943');
+  assert.strictEqual(stderr, '');
 }));
 
 // Also test the direct hexadecimal evaluation in JavaScript
 const hexValue = 0x10d4f;
-assert.strictEqual(hexValue, 68943, '0x10d4f should equal 68943');
+assert.strictEqual(hexValue, 68943);
